@@ -23,6 +23,17 @@ END_DATE = "2025-11-12"     # last full day before the hackathon started
 AIR_URL = "https://air-quality-api.open-meteo.com/v1/air-quality"
 WEATHER_URL = "https://archive-api.open-meteo.com/v1/archive"
 
+# Upwind cities on the Canadian-wildfire-smoke path toward Chicago (N/NW).
+# Their PM2.5 *today* is an early-warning signal for Chicago *tomorrow*.
+UPWIND = {
+    "minneapolis": (44.98, -93.27),
+    "green_bay": (44.51, -88.01),
+    "madison": (43.07, -89.40),
+    "thunder_bay": (48.38, -89.25),
+}
+# A nearby city the model never trains on, to test generalization.
+TRANSFER_CITY = ("milwaukee", 43.04, -87.91)
+
 
 def fetch_json(url, params, retries=3):
     for attempt in range(retries):
@@ -33,10 +44,10 @@ def fetch_json(url, params, retries=3):
     r.raise_for_status()
 
 
-def fetch_pm25():
+def fetch_pm25(lat=LAT, lon=LON):
     """Hourly PM2.5, averaged to one value per day."""
     js = fetch_json(AIR_URL, {
-        "latitude": LAT, "longitude": LON, "timezone": TIMEZONE,
+        "latitude": lat, "longitude": lon, "timezone": TIMEZONE,
         "start_date": START_DATE, "end_date": END_DATE,
         "hourly": "pm2_5",
     })
@@ -50,10 +61,10 @@ def fetch_pm25():
     return daily
 
 
-def fetch_weather():
+def fetch_weather(lat=LAT, lon=LON):
     """Daily weather that physically drives PM2.5: wind, rain, temperature."""
     js = fetch_json(WEATHER_URL, {
-        "latitude": LAT, "longitude": LON, "timezone": TIMEZONE,
+        "latitude": lat, "longitude": lon, "timezone": TIMEZONE,
         "start_date": START_DATE, "end_date": END_DATE,
         "daily": ",".join([
             "temperature_2m_mean", "temperature_2m_max", "temperature_2m_min",
@@ -78,6 +89,24 @@ def main():
     daily.index.name = "date"
     daily.to_csv("data/daily.csv")
     print(f"Wrote data/daily.csv: {len(daily)} rows, columns: {list(daily.columns)}")
+
+    print("Fetching upwind cities (smoke early-warning signal)...")
+    upwind = {}
+    for name, (lat, lon) in UPWIND.items():
+        upwind[name] = fetch_pm25(lat, lon).rename(name)
+        print(f"  {name}: {len(upwind[name])} days")
+        time.sleep(1)
+    up = pd.concat(upwind.values(), axis=1)
+    up.index.name = "date"
+    up.to_csv("data/upwind.csv")
+    print(f"Wrote data/upwind.csv: {len(up)} rows")
+
+    name, lat, lon = TRANSFER_CITY
+    print(f"Fetching {name} (generalization test)...")
+    mke = fetch_weather(lat, lon).join(fetch_pm25(lat, lon), how="inner").dropna(subset=["pm25"])
+    mke.index.name = "date"
+    mke.to_csv("data/milwaukee.csv")
+    print(f"Wrote data/milwaukee.csv: {len(mke)} rows")
 
 
 if __name__ == "__main__":
