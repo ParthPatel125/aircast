@@ -217,7 +217,7 @@ def chart_panel(A, pw, ph, series, ymax, frac, who=15.0, xlabels=(), ylabels=())
                             fill=color + (255,))
         d.text((lx + 20 * S, T - 1 * S), name, font=f_ax,
                fill=(225, 230, 240, 255), anchor="lm")
-        lx += (24 + 8 * len(name)) * S
+        lx += 20 * S + d.textlength(name, font=f_ax) + 26 * S
     for xi, lab in xlabels:
         d.text((L + (R - L) * xi, B + 6 * S), lab, font=f_ax,
                fill=(170, 178, 192, 220), anchor="ma")
