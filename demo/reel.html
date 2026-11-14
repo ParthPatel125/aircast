@@ -58,10 +58,11 @@ function pulse(t,beats,amt=0.10,decay=6){
   for(const b of beats){const dt=t-B(b); if(dt>0&&dt<0.5) p+=amt*Math.exp(-dt*decay);}
   return p;
 }
-/* enter helper: opacity + rise + blur, exit the same */
+/* enter: rise + blur in. exit: fade in place (no movement, so nothing
+   ever flies across another element) */
 function io(t,inB,outB,rise=26){
-  const i=sstep(t,B(inB),2.6,0.8), o=outB==null?0:sstep(t,B(outB),2.6,0.9);
-  return {op:clamp(i-o,0,1), y:(1-i)*rise - o*rise*0.8, bl:(1-i)*6 + o*6};
+  const i=sstep(t,B(inB),2.6,0.8), o=outB==null?0:sstep(t,B(outB),2.6,0.95);
+  return {op:clamp(i-o,0,1), y:(1-i)*rise, bl:(1-i)*6};
 }
 const px=v=>v.toFixed(2)+"px";
 
@@ -122,15 +123,22 @@ function pathFrom(vals,x0,y0,w,h,ymax){
   const n=vals.length;
   return vals.map((v,i)=>`${i?"L":"M"}${(x0+w*i/(n-1)).toFixed(1)},${(y0+h*(1-Math.min(v,ymax)/ymax)).toFixed(1)}`).join("");
 }
-const chartsvg=el("div");
+/* two separate, fixed charts: nothing morphs or slides between sections */
 const CW=1060,CH=560;
+const TESTX=790,TESTY=310,CASEX=430,CASEY=330;
+const chartsvg=el("div");
 chartsvg.innerHTML=`<svg width="${CW}" height="${CH}">
   <line x1="0" y1="${CH*(1-15/70)}" x2="${CW}" y2="${CH*(1-15/70)}" id="who1"
-    stroke="${rgb(RED)}" stroke-width="2.5" stroke-dasharray="8 8" opacity="1"/>
+    stroke="${rgb(RED)}" stroke-width="2.5" stroke-dasharray="8 8"/>
   <path id="pActual" d="${pathFrom(TEST.actual,0,0,CW,CH,70)}" fill="none"
     stroke="${rgb(INK)}" stroke-width="3"/>
   <path id="pFore" d="${pathFrom(TEST.forecast,0,0,CW,CH,70)}" fill="none"
     stroke="${rgb(BLUE)}" stroke-width="4.5"/>
+</svg>`;
+const casesvg=el("div");
+casesvg.innerHTML=`<svg width="${CW}" height="${CH}">
+  <line x1="0" y1="${CH*(1-15/95)}" x2="${CW}" y2="${CH*(1-15/95)}" id="who2"
+    stroke="${rgb(RED)}" stroke-width="2.5" stroke-dasharray="8 8"/>
   <path id="cActual" d="${pathFrom(CASE.actual,0,0,CW,CH,95)}" fill="none"
     stroke="${rgb(PAPER)}" stroke-width="4"/>
   <path id="cFore" d="${pathFrom(CASE.forecast,0,0,CW,CH,95)}" fill="none"
@@ -191,16 +199,13 @@ dateRow.forEach(e=>S(e,{font:"600 28px Inter",letterSpacing:".18em"}));
 window.seek=function(t){
   t=((t%DUR)+DUR)%DUR;
   /* ---- background inversion (honesty bars 29-32) ---- */
-  const dark=lin(t,[[0,0],[110,1,1.4],[129,0,1.6]]);
+  const dark=lin(t,[[0,0],[111,1,1.1],[129,0,1.4]]);
   const bg=mix(PAPER,INK,dark), fg=mix(INK,PAPER,dark);
   stage.style.background=rgb(bg);
 
-  /* ---- camera: slow drift per section, settles on close ---- */
-  const camZ=1.025+0.02*Math.sin(t*0.11)
-    +pulse(t,[16,116],0.045,3)   /* breathe on the two big hits */
-    ;
-  const camX=8*Math.sin(t*0.05), camY=6*Math.cos(t*0.045);
-  cam.style.transform=`translate(${camX}px,${camY}px) scale(${camZ})`;
+  /* ---- camera: locked, with a breath on the two big hits only ---- */
+  const camZ=1.0+pulse(t,[16,116],0.035,3);
+  cam.style.transform=`scale(${camZ})`;
 
   /* ================= THE DOT ================= */
   /* radius keys across the film */
@@ -340,61 +345,62 @@ window.seek=function(t){
       color:rgb(colr),opacity:o.op*tOp,filter:`blur(${o.bl}px)`});
   });
 
-  /* ---- results, bars 23-28 ---- */
+  /* ---- results, bars 23-28; everything fades out together at b107,
+     fully gone before the background turns dark at b111 ---- */
+  const OUT_R=107;
   const bL=sstep(t,B(89),2.8,.7), bR=sstep(t,B(90),2.8,.7);
-  const bOut=sstep(t,B(108),2.6,.85);
-  const hL=300*bL*(1-bOut), hR=270*bR*(1-bOut);
+  const rOut=sstep(t,B(OUT_R),2.6,.95);
+  const hL=300*Math.min(bL,1.04), hR=270*Math.min(bR,1.04);
   S(barL,{left:px(300),top:px(760-hL),width:"130px",height:px(hL),
-    background:rgb(mix(GRAYBAR,fg,dark*0.5)),borderRadius:"10px 10px 0 0",
-    opacity:clamp(bL-bOut,0,1)});
+    background:rgb(GRAYBAR),borderRadius:"10px 10px 0 0",
+    opacity:clamp(bL-rOut,0,1)});
   S(barR,{left:px(560),top:px(760-hR),width:"130px",height:px(hR),
-    background:rgb(BLUE),borderRadius:"10px 10px 0 0",opacity:clamp(bR-bOut,0,1)});
-  {const o=io(t,89.4,108);S(barLnum,{left:px(300),top:px(760-hL-86+o.y),color:rgb(fg),
+    background:rgb(BLUE),borderRadius:"10px 10px 0 0",opacity:clamp(bR-rOut,0,1)});
+  {const o=io(t,89.4,OUT_R);S(barLnum,{left:px(300),top:px(760-hL-86+o.y),color:rgb(fg),
      opacity:o.op,filter:`blur(${o.bl}px)`});}
-  {const o=io(t,90.4,108);S(barRnum,{left:px(560),top:px(760-hR-86+o.y),color:rgb(BLUE),
+  {const o=io(t,90.4,OUT_R);S(barRnum,{left:px(560),top:px(760-hR-86+o.y),color:rgb(BLUE),
      opacity:o.op,filter:`blur(${o.bl}px)`});}
-  {const o=io(t,91,108);S(barLlbl,{left:px(265),top:px(792+o.y),color:rgb(fg),opacity:o.op});}
-  {const o=io(t,91.5,108);S(barRlbl,{left:px(525),top:px(792+o.y),color:rgb(fg),opacity:o.op});}
-  {const o=io(t,92,109);S(chartTitle,{left:px(170),top:px(140+o.y),color:rgb(fg),
+  {const o=io(t,91,OUT_R);S(barLlbl,{left:px(265),top:px(792+o.y),color:rgb(fg),opacity:o.op});}
+  {const o=io(t,91.5,OUT_R);S(barRlbl,{left:px(525),top:px(792+o.y),color:rgb(fg),opacity:o.op});}
+  {const o=io(t,92,OUT_R);S(chartTitle,{left:px(170),top:px(140+o.y),color:rgb(fg),
      opacity:o.op,filter:`blur(${o.bl}px)`});}
 
-  /* chart frame persists into honesty section */
+  /* test chart: fixed in place, draws on, fades out with the section */
   const chIn=sstep(t,B(92),2.6,.8);
-  const chX=kv(t,[[92,790],[112,430]],2.4,.85), chY=kv(t,[[92,310],[112,330]],2.4,.85);
-  const chOut=sstep(t,B(128),2.4,.9);
-  chartsvg.style.opacity=clamp(chIn-chOut,0,1);
-  S(chartsvg,{left:px(chX),top:px(chY)});
-  /* draw-on via dashoffset, pure function of t */
+  chartsvg.style.opacity=clamp(chIn-rOut,0,1);
+  S(chartsvg,{left:px(TESTX),top:px(TESTY)});
   const pA=document.getElementById("pActual"), pF=document.getElementById("pFore");
-  const cA=document.getElementById("cActual"), cF=document.getElementById("cFore");
-  const lenA=6000,lenF=6000,lenC=2400;
-  const fTest=clamp(sstep(t,B(93),1.1,.95)-sstep(t,B(111),2.2,.95),0,1);
-  const fCase=clamp(sstep(t,B(113),1.3,.95)-chOut,0,1);
-  for(const [p,f_,l] of [[pA,fTest,lenA],[pF,clamp(fTest-0.12,0,1),lenA]]){
-    p.setAttribute("stroke-dasharray",l);p.setAttribute("stroke-dashoffset",l*(1-f_));
+  const lenA=6000;
+  const fTest=clamp(sstep(t,B(93),1.1,.95),0,1);
+  for(const [p,f_] of [[pA,fTest],[pF,clamp(fTest-0.12,0,1)]]){
+    p.setAttribute("stroke-dasharray",lenA);p.setAttribute("stroke-dashoffset",lenA*(1-f_));
     p.setAttribute("opacity",f_>0?1:0);
   }
-  pA.setAttribute("stroke",rgb(fg));
-  for(const [p,f_] of [[cA,fCase],[cF,clamp(fCase-0.15,0,1)]]){
-    p.setAttribute("stroke-dasharray",lenC);p.setAttribute("stroke-dashoffset",lenC*(1-f_));
-    p.setAttribute("opacity",f_>0?1:0);
-  }
-  cA.setAttribute("stroke",rgb(fg));
-  document.getElementById("who1").setAttribute("stroke",rgb(RED));
-  document.getElementById("who1").setAttribute("opacity",clamp(chIn-chOut,0,1)*.8);
-  {const o=io(t,94,110);S(legA,{left:px(chX+CW-320),top:px(chY+8+o.y),color:rgb(fg),opacity:o.op*.8});}
-  {const o=io(t,94.5,110);S(legF,{left:px(chX+CW-170),top:px(chY+8+o.y),color:rgb(BLUE),opacity:o.op});}
+  {const o=io(t,94,OUT_R);S(legA,{left:px(TESTX+CW-320),top:px(TESTY+8+o.y),color:rgb(fg),opacity:o.op*.8});}
+  {const o=io(t,94.5,OUT_R);S(legF,{left:px(TESTX+CW-170),top:px(TESTY+8+o.y),color:rgb(BLUE),opacity:o.op});}
   stats.forEach((e,i)=>{
-    const o=io(t,100+i*2,108.5);
+    const o=io(t,97+i*2,OUT_R);
     e.querySelector(".v").style.color=rgb(BLUE);
     S(e,{left:px(190+i*420),top:px(900+o.y),color:rgb(fg),opacity:o.op,
       filter:`blur(${o.bl}px)`});
   });
 
+  /* storm chart: its own element, enters fresh on the dark stage */
+  const caseIn=sstep(t,B(113),2.6,.8), caseOut=sstep(t,B(128),2.4,.95);
+  casesvg.style.opacity=clamp(caseIn-caseOut,0,1);
+  S(casesvg,{left:px(CASEX),top:px(CASEY)});
+  const cA=document.getElementById("cActual"), cF=document.getElementById("cFore");
+  const lenC=2400;
+  const fCase=clamp(sstep(t,B(113),1.3,.95),0,1);
+  for(const [p,f_] of [[cA,fCase],[cF,clamp(fCase-0.15,0,1)]]){
+    p.setAttribute("stroke-dasharray",lenC);p.setAttribute("stroke-dashoffset",lenC*(1-f_));
+    p.setAttribute("opacity",f_>0?1:0);
+  }
+
   /* honesty labels bars 29-32 */
-  {const o=io(t,117,127);S(mReal,{left:px(chX+CW*0.42),top:px(240+o.y),color:rgb(RED),
+  {const o=io(t,117,127);S(mReal,{left:px(CASEX+CW*0.42),top:px(240+o.y),color:rgb(RED),
      opacity:o.op,filter:`blur(${o.bl}px)`});}
-  {const o=io(t,118.5,127);S(mOurs,{left:px(chX+CW*0.30),top:px(930+o.y),color:rgb(BLUE),
+  {const o=io(t,118.5,127);S(mOurs,{left:px(CASEX+CW*0.30),top:px(930+o.y),color:rgb(BLUE),
      opacity:o.op,filter:`blur(${o.bl}px)`});}
   hon.forEach((e,i)=>{
     const o=io(t,120+i*2,127);
