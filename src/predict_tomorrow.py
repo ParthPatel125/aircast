@@ -19,11 +19,12 @@ warnings.filterwarnings("ignore", message=".*matmul.*", category=RuntimeWarning)
 CITY = "Chicago"
 LAT, LON = 41.8781, -87.6298
 TIMEZONE = "America/Chicago"
-WATCH_TRIGGER = 11.0    # tuned on the 2024 validation year (see AirCast.ipynb)
 WARNING_TRIGGER = 15.0  # WHO 2021 daily guideline
-# 80% prediction interval from 2024 residuals (measured 72% coverage in smoky
-# 2025 - see notebook section 11)
+# 80% prediction interval, from 2024 validation residuals of this script's
+# no-key CAMS pipeline (same conformal procedure as notebook section 9)
 INTERVAL_LO, INTERVAL_HI = -5.3, 3.5
+# WATCH fires when the top of the interval crosses the guideline (notebook s10)
+WATCH_TRIGGER = WARNING_TRIGGER - INTERVAL_HI
 UPWIND = {"minneapolis": (44.98, -93.27), "green_bay": (44.51, -88.01),
           "madison": (43.07, -89.40), "thunder_bay": (48.38, -89.25)}
 
