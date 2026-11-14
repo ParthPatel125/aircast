@@ -1,7 +1,7 @@
 # AirCast — next-day air quality forecast for Chicago
 
 **Track:** Climate
-**Team:** Parth Patel, Anay <!-- TODO: Anay's full name, exactly as it should appear on certificates -->
+**Team:** Parth Patel, Anay Goyal — Emerson High School
 
 ## The problem
 
