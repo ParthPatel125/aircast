@@ -1,0 +1,500 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>AirCast Reel</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;800;900&display=swap">
+<style>
+  html,body{margin:0;padding:0;background:#777;}
+  #stage{position:relative;width:1920px;height:1080px;overflow:hidden;
+    font-family:Inter,system-ui,sans-serif;font-variant-numeric:tabular-nums;}
+  #cam{position:absolute;inset:0;transform-origin:50% 50%;}
+  .el{position:absolute;will-change:auto;}
+  .lbl{font-weight:600;letter-spacing:.14em;}
+  svg{overflow:visible;display:block;}
+</style>
+<div id="stage"><div id="cam"></div></div>
+<script>
+"use strict";
+/* ============ data (real) ============ */
+const TEST = __TEST__;
+const CASE = __CASE__;
+
+/* ============ palette ============ */
+const PAPER=[244,242,237], INK=[17,19,24], BLUE=[47,107,255], RED=[229,72,77];
+const GRAYBAR=[159,163,171];
+const rgb=c=>`rgb(${c[0]|0},${c[1]|0},${c[2]|0})`;
+const mix=(a,b,t)=>[0,1,2].map(i=>a[i]+(b[i]-a[i])*Math.min(1,Math.max(0,t)));
+
+/* ============ time helpers ============ */
+const BPM=120, BEAT=60/BPM;            // 0.5 s
+const B=n=>n*BEAT;                      // beat index -> seconds
+const DUR=B(144);                       // 72.0 s
+const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
+
+/* closed-form underdamped spring step response (0 -> 1) */
+function sstep(t,t0,f=3.0,z=0.72){
+  if(t<t0) return 0;
+  const dt=t-t0, w=2*Math.PI*f, wd=w*Math.sqrt(1-z*z);
+  return 1-Math.exp(-z*w*dt)*(Math.cos(wd*dt)+z*w/wd*Math.sin(wd*dt));
+}
+/* keyed value: sum of springs, pure function of t */
+function kv(t,keys,f=3.0,z=0.72){
+  let v=keys[0][1];
+  for(let i=1;i<keys.length;i++) v+=(keys[i][1]-keys[i-1][1])*sstep(t,B(keys[i][0]),f,z);
+  return v;
+}
+/* linear key (for colors/fades that must not overshoot) */
+function lin(t,keys){
+  let v=keys[0][1];
+  for(let i=1;i<keys.length;i++){
+    const a=B(keys[i][0]), prev=B(keys[i-1][0]);
+    const k=clamp((t-a)/Math.max(0.0001,(keys[i][2]??0.35)),0,1);
+    v+= (keys[i][1]-keys[i-1][1])*(k*k*(3-2*k));
+  }
+  return v;
+}
+/* beat pulse: small decaying kick on listed beats */
+function pulse(t,beats,amt=0.10,decay=6){
+  let p=0;
+  for(const b of beats){const dt=t-B(b); if(dt>0&&dt<0.5) p+=amt*Math.exp(-dt*decay);}
+  return p;
+}
+/* enter helper: opacity + rise + blur, exit the same */
+function io(t,inB,outB,rise=26){
+  const i=sstep(t,B(inB),2.6,0.8), o=outB==null?0:sstep(t,B(outB),2.6,0.9);
+  return {op:clamp(i-o,0,1), y:(1-i)*rise - o*rise*0.8, bl:(1-i)*6 + o*6};
+}
+const px=v=>v.toFixed(2)+"px";
+
+/* ============ DOM ============ */
+const cam=document.getElementById("cam");
+function el(tag,cls,html){const e=document.createElement(tag);e.className="el "+(cls||"");
+  if(html!=null)e.innerHTML=html;cam.appendChild(e);return e;}
+const W=1920,H=1080,CX=W/2,CY=H/2;
+
+const stage=document.getElementById("stage");
+const ring=el("div");           // beat ripple around the dot
+const dot=el("div");            // THE dot
+const cap0=el("div","lbl","CHICAGO AIR");
+const dateRow=["JUN 24","JUN 25","JUN 26","JUN 27"].map((s,i)=>el("div","lbl",s));
+const unit=el("div","","µg/m³");
+const h1=el("div","","Overnight, Chicago had some<br>of the worst air on Earth.");
+const h1sub=el("div","","June 27, 2023. Fine-particle pollution, measured by EPA monitors.");
+const h2=el("div","","Should tomorrow's practice<br>be outside?");
+const h2sub=el("div","","In Chicago, 1 day in 9 is over the WHO guideline.");
+const h2sub2=el("div","","Apps say right now. The call is about tomorrow.");
+const nine=[...Array(8)].map(()=>el("div"));
+/* map */
+const CITY=[["Thunder Bay",1210,300],["Minneapolis",640,470],["Green Bay",1280,500],["Madison",1060,610]];
+const CHI=[1380,700];
+const mapsvg=el("div");
+mapsvg.innerHTML=`<svg width="1920" height="1080">
+ ${CITY.map((c,i)=>`<line id="ray${i}" x1="${c[1]}" y1="${c[2]}" x2="${CHI[0]}" y2="${CHI[1]}"
+   stroke="${rgb(INK)}" stroke-width="3" stroke-dasharray="10 14"/>`).join("")}
+ ${CITY.map((c,i)=>`<circle id="str${i}" r="7" fill="${rgb(BLUE)}"/>`).join("")}
+</svg>`;
+const citydots=CITY.map(()=>el("div"));
+const citylbls=CITY.map(c=>el("div","lbl",c[0].toUpperCase()));
+const chilbl=el("div","lbl","CHICAGO");
+const chips=[ "today's monitor readings","today's weather","PM2.5 in four cities upwind" ]
+  .map(s=>el("div","",s));
+const model=el("div","","<div style='font-weight:800;font-size:40px'>Ridge regression</div><div style='font-weight:500;font-size:24px;opacity:.62;margin-top:8px'>trained on the past, tested only on the future</div>");
+/* terminal (the pill grows into this) */
+const term=el("div");
+const tdots=el("div","","<span></span><span></span><span></span>");
+const TLINES=[
+  ["AirCast. Next-day PM2.5 forecast for Chicago",0],
+  ["Model trained on 1,194 days (2022-08-06 to 2025-11-11)",0],
+  ["Today (2026-11-14) so far: 3.3 µg/m³",0],
+  ["Upwind now: Minneapolis 13, Green Bay 2, Madison 3, Thunder Bay 1",0],
+  ["Forecast for tomorrow: 8.4 µg/m³  (likely range 3 to 12)",1],
+  ["Alert level: ALL CLEAR. Outdoor activity looks fine.",2],
+];
+const tcmd=el("div");
+const tlines=TLINES.map(l=>el("div","",l[0]));
+/* results */
+const barL=el("div"), barR=el("div");
+const barLnum=el("div","","3.46"), barRnum=el("div","","3.11");
+const barLlbl=el("div","","persistence<br><span style='opacity:.6'>tomorrow = today</span>");
+const barRlbl=el("div","","AirCast<br><span style='opacity:.6'>error, µg/m³</span>");
+const chartBox=el("div");
+const chartTitle=el("div","","315 days of 2025 the model never saw");
+function pathFrom(vals,x0,y0,w,h,ymax){
+  const n=vals.length;
+  return vals.map((v,i)=>`${i?"L":"M"}${(x0+w*i/(n-1)).toFixed(1)},${(y0+h*(1-Math.min(v,ymax)/ymax)).toFixed(1)}`).join("");
+}
+const chartsvg=el("div");
+const CW=1200,CH=560;
+chartsvg.innerHTML=`<svg width="${CW}" height="${CH}">
+  <line x1="0" y1="${CH*(1-15/70)}" x2="${CW}" y2="${CH*(1-15/70)}" id="who1"
+    stroke="${rgb(RED)}" stroke-width="2.5" stroke-dasharray="8 8" opacity="1"/>
+  <path id="pActual" d="${pathFrom(TEST.actual,0,0,CW,CH,70)}" fill="none"
+    stroke="${rgb(INK)}" stroke-width="3"/>
+  <path id="pFore" d="${pathFrom(TEST.forecast,0,0,CW,CH,70)}" fill="none"
+    stroke="${rgb(BLUE)}" stroke-width="4.5"/>
+  <path id="cActual" d="${pathFrom(CASE.actual,0,0,CW,CH,95)}" fill="none"
+    stroke="${rgb(PAPER)}" stroke-width="4"/>
+  <path id="cFore" d="${pathFrom(CASE.forecast,0,0,CW,CH,95)}" fill="none"
+    stroke="${rgb(BLUE)}" stroke-width="5"/>
+</svg>`;
+const legA=el("div","lbl","ACTUAL"), legF=el("div","lbl","FORECAST");
+const stats=[["10%","better at 1 day"],["25%","better at 3 days"],
+             ["88%","bad days caught"],["77%","warnings correct"]]
+  .map(s=>el("div","",`<div class="v" style="font-weight:900;font-size:58px">${s[0]}</div><div style="font-weight:600;font-size:23px;opacity:.65">${s[1]}</div>`));
+/* honesty */
+const mReal=el("div","","Reality: 134");
+const mOurs=el("div","","Our call: 17. Right decision, wrong magnitude.");
+const hon=[ "The first smoke day is invisible from the ground.",
+            "Extreme events need satellites.",
+            "We measured the gap instead of hiding it." ].map(s=>el("div","",s));
+/* close: dotless i, so the hero dot docks as its tittle */
+const WM="AırCast.".split("");
+const WMADV=[133,49,82,141,108,101,72,53];   /* Inter 900 advances at 190px */
+const WMX=[];{let a=0;for(const w of WMADV){WMX.push(a);a+=w;}}
+const WMW=WMX[WMX.length-1]+WMADV[WMADV.length-1];
+const wm=WM.map(ch=>el("div","",ch));
+const under=el("div");
+const credits=el("div","","Parth Patel and Anay Goyal · Emerson High School");
+const repo=el("div","lbl","GITHUB.COM/PARTHPATEL125/AIRCAST");
+
+/* static styles */
+function S(e,st){Object.assign(e.style,st);}
+S(cap0,{font:"600 30px Inter",letterSpacing:".3em"});
+S(unit,{font:"600 34px Inter"});
+S(h1,{font:"900 66px/1.12 Inter",letterSpacing:"-.02em"});
+S(h1sub,{font:"500 30px Inter",opacity:".7"});
+S(h2,{font:"900 92px/1.06 Inter",letterSpacing:"-.025em"});
+S(h2sub,{font:"600 36px Inter"});
+S(h2sub2,{font:"500 30px Inter",opacity:".65"});
+citylbls.forEach(e=>S(e,{font:"600 24px Inter",letterSpacing:".12em"}));
+S(chilbl,{font:"800 28px Inter",letterSpacing:".12em"});
+chips.forEach(e=>S(e,{font:"600 30px Inter",padding:"18px 30px",borderRadius:"16px"}));
+S(model,{padding:"44px 56px",borderRadius:"28px",textAlign:"center"});
+S(tcmd,{font:"700 31px/1 Menlo,Inter",whiteSpace:"pre"});
+tlines.forEach(e=>S(e,{font:"500 29px/1 Menlo,Inter",whiteSpace:"pre"}));
+S(barLnum,{font:"900 64px Inter"});S(barRnum,{font:"900 64px Inter"});
+S(barLlbl,{font:"600 27px/1.3 Inter"});S(barRlbl,{font:"600 27px/1.3 Inter"});
+S(chartTitle,{font:"900 56px Inter",letterSpacing:"-.02em"});
+S(legA,{font:"600 22px Inter",letterSpacing:".14em"});
+S(legF,{font:"600 22px Inter",letterSpacing:".14em"});
+S(mReal,{font:"900 54px Inter"});
+S(mOurs,{font:"600 34px Inter"});
+hon.forEach(e=>S(e,{font:"800 52px Inter",letterSpacing:"-.015em"}));
+wm.forEach(e=>S(e,{font:"900 190px Inter",letterSpacing:"-.03em"}));
+S(credits,{font:"600 32px Inter"});
+S(repo,{font:"600 26px Inter",letterSpacing:".16em"});
+dateRow.forEach(e=>S(e,{font:"600 28px Inter",letterSpacing:".18em"}));
+
+/* ============ the seek function ============ */
+window.seek=function(t){
+  t=((t%DUR)+DUR)%DUR;
+  /* ---- background inversion (honesty bars 29-32) ---- */
+  const dark=lin(t,[[0,0],[110,1,1.4],[129,0,1.6]]);
+  const bg=mix(PAPER,INK,dark), fg=mix(INK,PAPER,dark);
+  stage.style.background=rgb(bg);
+
+  /* ---- camera: slow drift per section, settles on close ---- */
+  const camZ=1.025+0.02*Math.sin(t*0.11)
+    +pulse(t,[16,116],0.045,3)   /* breathe on the two big hits */
+    ;
+  const camX=8*Math.sin(t*0.05), camY=6*Math.cos(t*0.045);
+  cam.style.transform=`translate(${camX}px,${camY}px) scale(${camZ})`;
+
+  /* ================= THE DOT ================= */
+  /* radius keys across the film */
+  const r=kv(t,[[0,34],[8,40],[10,46],[12,42],[14,70],[16,150],[24,26],[25,26],
+                [40,26],[52,20],[57,16],[58.8,0],[128,0],[134,17],[142,34]],2.6,0.78)
+          *(1+pulse(t,[0,1,2,3,4,5,6,7,28,30,32,34,36],0.07));
+  /* position keys */
+  const dx=kv(t,[[0,CX],[7,560],[24,CX+344],[40,CHI[0]],[57,CHI[0]],[58,1380],
+                 [134,CX-WMW/2+133+24],[142,CX]],2.4,0.8);
+  const dy=kv(t,[[0,CY],[7,470],[24,700],[40,CHI[1]],[57,CHI[1]],[58,760],
+                 [134,CY-96],[142,CY]],2.4,0.8);
+  /* color: ink -> red (pollution) -> blue (the forecast) -> ink */
+  const cMix=lin(t,[[0,0],[12,1,2.0],[38,1],[41,2,1.0],[128,2],[134,3,0.8]]);
+  const dotCol=cMix<1?mix(INK,RED,cMix):cMix<2?mix(RED,BLUE,cMix-1):mix(BLUE,INK,cMix-2);
+  S(dot,{left:px(dx-r),top:px(dy-r),width:px(2*r),height:px(2*r),
+    borderRadius:"50%",background:rgb(dotCol),zIndex:30});
+  dot.style.opacity=r<0.5?0:1;
+
+  /* beat ripple rings, bars 1-2: something lands on every beat */
+  {let rr=0,ro=0;
+   for(let bb=0;bb<8;bb++){const dtt=t-B(bb);
+     if(dtt>0&&dtt<0.5){rr=34+dtt/0.5*130;ro=(1-dtt/0.5)*0.45;}}
+   S(ring,{left:px(dx-rr),top:px(dy-rr),width:px(2*rr),height:px(2*rr),
+     borderRadius:"50%",border:`3px solid ${rgb(fg)}`,opacity:ro,
+     boxSizing:"border-box"});}
+
+  /* counter inside the dot while it is the pollution badge */
+  const cnt=Math.round(kv(t,[[8,9],[10,14],[12,9],[14,32],[16,134],[23,134]],2.8,0.85));
+  const showCnt=clamp(sstep(t,B(8),3,.8)-sstep(t,B(23.6),3,.9),0,1);
+  dot.innerHTML=showCnt>0.01?`<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    font:900 ${Math.max(22,r*0.78)}px Inter;color:${rgb(PAPER)};opacity:${showCnt}">${cnt}</div>`:"";
+
+  /* caption bar 1-2 */
+  {const o=io(t,0.5,5);S(cap0,{left:px(CX-118),top:px(CY+86+o.y),color:rgb(fg),
+    opacity:o.op*0.75,filter:`blur(${o.bl}px)`});}
+
+  /* unit + date row, bars 3-6 */
+  {const o=io(t,8.5,23.5);
+   S(unit,{left:px(560+170),top:px(430+o.y),color:rgb(fg),opacity:o.op*.7,filter:`blur(${o.bl}px)`});}
+  dateRow.forEach((e,i)=>{
+    const o=io(t,8+i*2,23.5);
+    const hot=i===3&&t>B(14);
+    S(e,{left:px(560-120+i*190),top:px(640+o.y),opacity:o.op*(hot?1:.45),
+      color:rgb(hot?RED:fg),filter:`blur(${o.bl}px)`});
+  });
+  {const o=io(t,18,23.5);S(h1,{left:px(860),top:px(330+o.y),color:rgb(fg),
+    opacity:o.op,filter:`blur(${o.bl}px)`});}
+  {const o=io(t,20,23.5);S(h1sub,{left:px(862),top:px(510+o.y),color:rgb(fg),
+    opacity:o.op*.72,filter:`blur(${o.bl}px)`});}
+
+  /* nine dots, bars 7-10: hero is the 9th (red) */
+  nine.forEach((e,i)=>{
+    const slot=CX-344+i*86;
+    const ap=sstep(t,B(24+i*0.5),3.2,0.7);
+    const toCity=i<4;                     /* first 4 become upwind cities */
+    const mx=toCity?kv(t,[[24,slot],[40,CITY[i][1]]],2.4,.8)
+                   :kv(t,[[24,slot],[40,slot]],2.4,.8);
+    const my=toCity?kv(t,[[24,700],[40,CITY[i][2]]],2.4,.8)
+                   :kv(t,[[24,700],[40,700]],2.4,.8);
+    const rr=(toCity?kv(t,[[24,0],[24.01,22],[40,15],[53+i*0.5,0]],3,.7)
+                    :kv(t,[[24,0],[24.01,22],[40,22],[41,0]],3,.7))
+             *ap*(1+pulse(t,[28,30,32,34,36,44+i*2],0.14));
+    S(e,{left:px(mx-rr),top:px(my-rr),width:px(2*rr),height:px(2*rr),
+      borderRadius:"50%",background:rgb(mix(fg,INK,0)),opacity:rr>0.4?0.85:0});
+  });
+  {const o=io(t,28,37.5);S(h2,{left:px(CX-620),top:px(280+o.y),color:rgb(fg),
+    opacity:o.op,filter:`blur(${o.bl}px)`,textAlign:"center",width:"1240px"});}
+  {const o=io(t,30,37.5);S(h2sub,{left:px(CX-620),top:px(830+o.y),width:"1240px",
+    textAlign:"center",color:rgb(fg),opacity:o.op,filter:`blur(${o.bl}px)`});}
+  {const o=io(t,34,37.5);S(h2sub2,{left:px(CX-620),top:px(892+o.y),width:"1240px",
+    textAlign:"center",color:rgb(fg),opacity:o.op,filter:`blur(${o.bl}px)`});}
+
+  /* map, bars 11-15 */
+  const mapIn=sstep(t,B(41),2.6,.8), mapOut=sstep(t,B(52),2.4,.85);
+  const mapOp=clamp(mapIn-mapOut,0,1);
+  mapsvg.style.opacity=mapOp;
+  CITY.forEach((c,i)=>{
+    const ray=document.getElementById("ray"+i);
+    const condense=sstep(t,B(52+i*0.5),2.6,.8);
+    const ex=c[1]+(1500-c[1])*condense, ey=c[2]+(620-c[2])*condense;
+    ray.setAttribute("x1",ex);ray.setAttribute("y1",ey);
+    ray.setAttribute("stroke",rgb(mix(fg,fg,0)));ray.setAttribute("opacity",0.28*mapOp);
+    const s=document.getElementById("str"+i);
+    const k=clamp((t-B(44+i*2))/ (BEAT*1.6),0,1);
+    s.setAttribute("cx",ex+(CHI[0]-ex)*k); s.setAttribute("cy",ey+(CHI[1]-ey)*k);
+    s.setAttribute("opacity",(k>0&&k<1?1:0)*mapOp);
+    const o=io(t,41+i*0.5,52+i*0.5);
+    S(citylbls[i],{left:px(ex-80),top:px(ey-52+o.y),color:rgb(fg),opacity:o.op*.8,
+      filter:`blur(${o.bl}px)`});
+  });
+  {const o=io(t,41.5,60);S(chilbl,{left:px(CHI[0]-190),top:px(CHI[1]-14+o.y),color:rgb(fg),
+    opacity:o.op,filter:`blur(${o.bl}px)`});}
+  chips.forEach((e,i)=>{
+    const o=io(t,46+i*2,54+i*0.5);
+    S(e,{left:px(170),top:px(300+i*100+o.y),background:rgb(fg),color:rgb(bg),
+      opacity:o.op,filter:`blur(${o.bl}px)`});
+  });
+  /* model card bars 14-15 */
+  {const i_=sstep(t,B(54),2.8,.72)*(1+pulse(t,[56],0.05)), o_=sstep(t,B(58.5),2.6,.85);
+   const sc=i_*(1-0.25*o_);
+   S(model,{left:px(1140),top:px(430),color:rgb(bg),background:rgb(fg),
+     transform:`scale(${Math.max(0.001,sc)})`,transformOrigin:"50% 50%",
+     opacity:clamp(i_*(1-o_)*1.2,0,1)});}
+
+  /* ---- pill -> terminal, bars 16-22 ---- */
+  /* the dot ejects at b58 as a pill that IS the terminal container */
+  const tw=kv(t,[[58,430],[64,1380],[88,250]],2.3,.8);
+  const th=kv(t,[[58,88],[64,560],[88,86]],2.3,.8);
+  const tx=kv(t,[[58,1380],[64,CX],[88,CX]],2.3,.82);
+  const ty=kv(t,[[58,760],[64,CY+10],[88,CY]],2.3,.82);
+  const tr_=kv(t,[[58,43],[64,26],[88,43]],2.6,.8);
+  const tIn=sstep(t,B(58),3,.75), tOut=sstep(t,B(88.3),2.8,.85);
+  const tOp=clamp(tIn-tOut,0,1);
+  S(term,{left:px(tx-tw/2),top:px(ty-th/2),width:px(tw),height:px(th),
+    borderRadius:px(tr_),background:rgb(mix(INK,[10,13,19],dark)),opacity:tOp,zIndex:18,
+    boxShadow:`0 ${30*tOp}px ${90*tOp}px rgba(0,0,0,.18)`});
+  tdots.style.zIndex=tcmd.style.zIndex=21;
+  tlines.forEach(e=>e.style.zIndex=21);
+  /* pill text before expansion */
+  term.innerHTML = (t<B(63))?`<div style="display:flex;align-items:center;justify-content:center;height:100%;
+     font:800 34px Inter;color:${rgb(PAPER)};white-space:nowrap">tomorrow: 8.4 µg/m³</div>`:"";
+  const innerOut=sstep(t,B(87.3),3,.9);
+  {const o=clamp(sstep(t,B(64.5),3,.8)-innerOut,0,1);
+   S(tdots,{left:px(tx-tw/2+30),top:px(ty-th/2+26),opacity:o});
+   tdots.querySelectorAll("span").forEach(sp=>S(sp,{display:"inline-block",width:"16px",
+     height:"16px",borderRadius:"50%",background:"#3c4454",marginRight:"10px"}));}
+  const CMD="$ python src/predict_tomorrow.py";
+  const nch=Math.floor(clamp((t-B(66))/(BEAT*7)*CMD.length,0,CMD.length));
+  {const o=clamp(sstep(t,B(65.5),3,.8)-innerOut,0,1);
+   S(tcmd,{left:px(tx-tw/2+44),top:px(ty-th/2+78),color:rgb(PAPER),opacity:o});
+   tcmd.textContent=CMD.slice(0,nch)+(nch<CMD.length&&(t*2|0)%2===0?"▌":"");}
+  const lineBeats=[76,77,78,79,83,85];
+  tlines.forEach((e,i)=>{
+    const o=io(t,lineBeats[i],87.3,14);
+    const colr=TLINES[i][1]===1?BLUE:TLINES[i][1]===2?[110,200,150]:[168,176,190];
+    S(e,{left:px(tx-tw/2+44),top:px(ty-th/2+140+i*58+(i>3?26:0)+o.y),
+      color:rgb(colr),opacity:o.op*tOp,filter:`blur(${o.bl}px)`});
+  });
+
+  /* ---- results, bars 23-28 ---- */
+  const bL=sstep(t,B(89),2.8,.7), bR=sstep(t,B(90),2.8,.7);
+  const bOut=sstep(t,B(108),2.6,.85);
+  const hL=300*bL*(1-bOut), hR=270*bR*(1-bOut);
+  S(barL,{left:px(300),top:px(760-hL),width:"130px",height:px(hL),
+    background:rgb(mix(GRAYBAR,fg,dark*0.5)),borderRadius:"10px 10px 0 0",
+    opacity:clamp(bL-bOut,0,1)});
+  S(barR,{left:px(560),top:px(760-hR),width:"130px",height:px(hR),
+    background:rgb(BLUE),borderRadius:"10px 10px 0 0",opacity:clamp(bR-bOut,0,1)});
+  {const o=io(t,89.4,108);S(barLnum,{left:px(300-10),top:px(760-hL-86+o.y),color:rgb(fg),
+     opacity:o.op,filter:`blur(${o.bl}px)`});}
+  {const o=io(t,90.4,108);S(barRnum,{left:px(560),top:px(760-hR-86+o.y),color:rgb(BLUE),
+     opacity:o.op,filter:`blur(${o.bl}px)`});}
+  {const o=io(t,91,108);S(barLlbl,{left:px(292),top:px(790+o.y),color:rgb(fg),opacity:o.op});}
+  {const o=io(t,91.5,108);S(barRlbl,{left:px(556),top:px(790+o.y),color:rgb(fg),opacity:o.op});}
+  {const o=io(t,92,109);S(chartTitle,{left:px(170),top:px(140+o.y),color:rgb(fg),
+     opacity:o.op,filter:`blur(${o.bl}px)`});}
+
+  /* chart frame persists into honesty section */
+  const chIn=sstep(t,B(92),2.6,.8);
+  const chX=kv(t,[[92,860],[112,360]],2.4,.85), chY=kv(t,[[92,330],[112,330]],2.4,.85);
+  const chOut=sstep(t,B(128),2.4,.9);
+  chartsvg.style.opacity=clamp(chIn-chOut,0,1);
+  S(chartsvg,{left:px(chX),top:px(chY)});
+  /* draw-on via dashoffset, pure function of t */
+  const pA=document.getElementById("pActual"), pF=document.getElementById("pFore");
+  const cA=document.getElementById("cActual"), cF=document.getElementById("cFore");
+  const lenA=6000,lenF=6000,lenC=2400;
+  const fTest=clamp(sstep(t,B(93),1.1,.95)-sstep(t,B(111),2.2,.95),0,1);
+  const fCase=clamp(sstep(t,B(113),1.3,.95)-chOut,0,1);
+  for(const [p,f_,l] of [[pA,fTest,lenA],[pF,clamp(fTest-0.12,0,1),lenA]]){
+    p.setAttribute("stroke-dasharray",l);p.setAttribute("stroke-dashoffset",l*(1-f_));
+    p.setAttribute("opacity",f_>0?1:0);
+  }
+  pA.setAttribute("stroke",rgb(fg));
+  for(const [p,f_] of [[cA,fCase],[cF,clamp(fCase-0.15,0,1)]]){
+    p.setAttribute("stroke-dasharray",lenC);p.setAttribute("stroke-dashoffset",lenC*(1-f_));
+    p.setAttribute("opacity",f_>0?1:0);
+  }
+  cA.setAttribute("stroke",rgb(fg));
+  document.getElementById("who1").setAttribute("stroke",rgb(RED));
+  document.getElementById("who1").setAttribute("opacity",clamp(chIn-chOut,0,1)*.8);
+  {const o=io(t,94,110);S(legA,{left:px(chX),top:px(chY-44+o.y),color:rgb(fg),opacity:o.op*.8});}
+  {const o=io(t,94.5,110);S(legF,{left:px(chX+150),top:px(chY-44+o.y),color:rgb(BLUE),opacity:o.op});}
+  stats.forEach((e,i)=>{
+    const o=io(t,100+i*2,108.5);
+    e.querySelector(".v").style.color=rgb(BLUE);
+    S(e,{left:px(190+i*420),top:px(900+o.y),color:rgb(fg),opacity:o.op,
+      filter:`blur(${o.bl}px)`});
+  });
+
+  /* honesty labels bars 29-32 */
+  {const o=io(t,117,127);S(mReal,{left:px(360+CW*0.42),top:px(240+o.y),color:rgb(RED),
+     opacity:o.op,filter:`blur(${o.bl}px)`});}
+  {const o=io(t,118.5,127);S(mOurs,{left:px(360+CW*0.33),top:px(930+o.y),color:rgb(BLUE),
+     opacity:o.op,filter:`blur(${o.bl}px)`});}
+  hon.forEach((e,i)=>{
+    const o=io(t,120+i*2,127);
+    S(e,{left:px(1140),top:px(380+i*160+o.y),color:i===1?rgb([255,200,90]):rgb(PAPER),
+      opacity:o.op*(dark>0.5?1:0),filter:`blur(${o.bl}px)`,maxWidth:"720px",
+      font:"800 44px/1.25 Inter"});
+  });
+
+  /* close bars 33-36 */
+  const base=sstep(t,B(129),2.4,.8)*(1-sstep(t,B(141),2.6,.9));
+  S(under,{left:px(CX-420),top:px(CY+120),width:px(840*base),height:"10px",
+    background:rgb(fg),borderRadius:"5px",opacity:base});
+  wm.forEach((e,i)=>{
+    const o=io(t,130+i*0.5,140,60);
+    S(e,{left:px(CX-WMW/2+WMX[i]),top:px(CY-150+o.y),color:rgb(fg),
+      opacity:o.op,filter:`blur(${o.bl}px)`});
+  });
+  {const o=io(t,136,140.5);S(credits,{left:px(CX-330),top:px(CY+190+o.y),color:rgb(fg),
+     opacity:o.op*.8,filter:`blur(${o.bl}px)`});}
+  {const o=io(t,137,140.5);S(repo,{left:px(CX-330),top:px(CY+248+o.y),color:rgb(fg),
+     opacity:o.op*.6,filter:`blur(${o.bl}px)`});}
+};
+seek(0);
+
+/* ============ soundtrack, written in code ============ */
+window.renderAudio=async function(){
+  const sr=44100, len=Math.ceil((DUR+0.5)*sr);
+  const ctx=new OfflineAudioContext(2,len,sr);
+  const out=ctx.destination;
+  const master=ctx.createGain(); master.gain.value=0.9; master.connect(out);
+  function kick(t,amp=1){
+    const o=ctx.createOscillator(), g=ctx.createGain();
+    o.frequency.setValueAtTime(120,t);o.frequency.exponentialRampToValueAtTime(44,t+0.12);
+    g.gain.setValueAtTime(0.5*amp,t);g.gain.exponentialRampToValueAtTime(0.001,t+0.22);
+    o.connect(g);g.connect(master);o.start(t);o.stop(t+0.25);
+  }
+  function hat(t,amp=0.16){
+    const b=ctx.createBufferSource(), buf=ctx.createBuffer(1,sr*0.06,sr);
+    const d=buf.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1)*Math.exp(-i/d.length*9);
+    b.buffer=buf;const f=ctx.createBiquadFilter();f.type="highpass";f.frequency.value=7000;
+    const g=ctx.createGain();g.gain.value=amp;b.connect(f);f.connect(g);g.connect(master);b.start(t);
+  }
+  function hit(t,amp=1){
+    kick(t,amp*1.2);
+    const b=ctx.createBufferSource(), buf=ctx.createBuffer(1,sr*0.5,sr);
+    const d=buf.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1)*Math.exp(-i/d.length*7);
+    b.buffer=buf;const f=ctx.createBiquadFilter();f.type="lowpass";f.frequency.value=1200;
+    const g=ctx.createGain();g.gain.value=0.5*amp;b.connect(f);f.connect(g);g.connect(master);b.start(t);
+  }
+  function tone(t,f0,dur,amp,type="sine",pan=0){
+    const o=ctx.createOscillator();o.type=type;o.frequency.value=f0;
+    const g=ctx.createGain();
+    g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(amp,t+0.06);
+    g.gain.setValueAtTime(amp,t+dur*0.6);g.gain.linearRampToValueAtTime(0,t+dur);
+    const p=ctx.createStereoPanner();p.pan.value=pan;
+    o.connect(g);g.connect(p);p.connect(master);o.start(t);o.stop(t+dur+0.02);
+  }
+  function pad(t,freqs,dur,amp=0.05){
+    for(const f of freqs){tone(t,f,dur,amp,"triangle",-0.2);tone(t,f*1.004,dur,amp*0.8,"triangle",0.2);}
+  }
+  function riser(t,dur,amp=0.3){
+    const b=ctx.createBufferSource(), buf=ctx.createBuffer(1,sr*dur,sr);
+    const d=buf.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1)*(i/d.length);
+    b.buffer=buf;const f=ctx.createBiquadFilter();f.type="bandpass";f.Q.value=1.2;
+    f.frequency.setValueAtTime(300,t);f.frequency.exponentialRampToValueAtTime(4500,t+dur);
+    const g=ctx.createGain();g.gain.value=amp;b.connect(f);f.connect(g);g.connect(master);b.start(t);
+  }
+  const Am=[110,164.8,220],F=[87.3,130.8,174.6],C=[130.8,196,261.6],G=[98,146.8,196],Dm=[73.4,110,146.8];
+  /* kicks: every beat, lighter in quiet bars */
+  for(let b=0;b<144;b++){
+    const t=B(b)+0.012;
+    const barN=Math.floor(b/4)+1;
+    const amp = barN<=2?0.5: barN<=10?0.7: barN<=22?0.8: barN<=28?1.0: barN<=32?0.85:0.7;
+    kick(t,amp*(b%4===0?1:0.55));
+    if(b%2===1)hat(t,barN>=23&&barN<=28?0.2:0.1);
+    if(barN>=23&&barN<=28&&b%4===2)hit(t,0.35);
+  }
+  /* chord bed: one chord per 2 bars */
+  const prog=[Am,Am,F,C,Am,F,C,G,Am,F,C,G,Dm,Dm,F,C,C,C];
+  prog.forEach((ch,i)=>pad(B(i*8),ch,B(8)*1.05,0.045));
+  /* accents on story hits */
+  hit(B(16),1.0);                 /* 134 lands */
+  riser(B(108),B(8)-0.1,0.26);    /* into the storm */
+  hit(B(116),1.1);                /* spike */
+  hit(B(134),0.8);                /* dot docks on the i */
+  pad(B(136),[261.6,329.6,392],B(8),0.06);  /* final C major */
+  const buf=await ctx.startRendering();
+  /* to wav */
+  const n=buf.length, ch0=buf.getChannelData(0), ch1=buf.getChannelData(1);
+  const bytes=new DataView(new ArrayBuffer(44+n*4));
+  function wstr(o,s){for(let i=0;i<s.length;i++)bytes.setUint8(o+i,s.charCodeAt(i));}
+  wstr(0,"RIFF");bytes.setUint32(4,36+n*4,true);wstr(8,"WAVE");wstr(12,"fmt ");
+  bytes.setUint32(16,16,true);bytes.setUint16(20,1,true);bytes.setUint16(22,2,true);
+  bytes.setUint32(24,sr,true);bytes.setUint32(28,sr*4,true);bytes.setUint16(32,4,true);
+  bytes.setUint16(34,16,true);wstr(36,"data");bytes.setUint32(40,n*4,true);
+  let o=44;
+  for(let i=0;i<n;i++){
+    bytes.setInt16(o,Math.max(-1,Math.min(1,ch0[i]))*32767,true);o+=2;
+    bytes.setInt16(o,Math.max(-1,Math.min(1,ch1[i]))*32767,true);o+=2;
+  }
+  let bin="";const u8=new Uint8Array(bytes.buffer);
+  const CH=0x8000;
+  for(let i=0;i<u8.length;i+=CH)bin+=String.fromCharCode.apply(null,u8.subarray(i,i+CH));
+  return btoa(bin);
+};
+</script>
