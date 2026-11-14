@@ -62,7 +62,9 @@ function pulse(t,beats,amt=0.10,decay=6){
    ever flies across another element) */
 function io(t,inB,outB,rise=26){
   const i=sstep(t,B(inB),2.6,0.8), o=outB==null?0:sstep(t,B(outB),2.6,0.95);
-  return {op:clamp(i-o,0,1), y:(1-i)*rise, bl:(1-i)*6};
+  /* blur must never go negative: CSS rejects blur(-0.0001px) and silently
+     keeps the previous (fully blurred) value, leaving random text fuzzy */
+  return {op:clamp(i-o,0,1), y:(1-i)*rise, bl:Math.max(0,1-i)*6};
 }
 const px=v=>v.toFixed(2)+"px";
 
@@ -91,7 +93,6 @@ const mapsvg=el("div");
 mapsvg.innerHTML=`<svg width="1920" height="1080">
  ${CITY.map((c,i)=>`<line id="ray${i}" x1="${c[1]}" y1="${c[2]}" x2="${CHI[0]}" y2="${CHI[1]}"
    stroke="${rgb(INK)}" stroke-width="3" stroke-dasharray="10 14"/>`).join("")}
- ${CITY.map((c,i)=>`<circle id="str${i}" r="7" fill="${rgb(BLUE)}"/>`).join("")}
 </svg>`;
 const citydots=CITY.map(()=>el("div"));
 const citylbls=CITY.map(c=>el("div","lbl",c[0].toUpperCase()));
@@ -125,7 +126,9 @@ function pathFrom(vals,x0,y0,w,h,ymax){
 }
 /* two separate, fixed charts: nothing morphs or slides between sections */
 const CW=1060,CH=560;
-const TESTX=790,TESTY=310,CASEX=430,CASEY=330;
+const TESTX=790,TESTY=310;
+/* storm chart is narrower and lives left, so the copy column never touches it */
+const CCW=880,CASEX=150,CASEY=300;
 const chartsvg=el("div");
 chartsvg.innerHTML=`<svg width="${CW}" height="${CH}">
   <line x1="0" y1="${CH*(1-15/70)}" x2="${CW}" y2="${CH*(1-15/70)}" id="who1"
@@ -136,14 +139,18 @@ chartsvg.innerHTML=`<svg width="${CW}" height="${CH}">
     stroke="${rgb(BLUE)}" stroke-width="4.5"/>
 </svg>`;
 const casesvg=el("div");
-casesvg.innerHTML=`<svg width="${CW}" height="${CH}">
-  <line x1="0" y1="${CH*(1-15/95)}" x2="${CW}" y2="${CH*(1-15/95)}" id="who2"
+casesvg.innerHTML=`<svg width="${CCW}" height="${CH}">
+  <line x1="0" y1="${CH*(1-15/95)}" x2="${CCW}" y2="${CH*(1-15/95)}" id="who2"
     stroke="${rgb(RED)}" stroke-width="2.5" stroke-dasharray="8 8"/>
-  <path id="cActual" d="${pathFrom(CASE.actual,0,0,CW,CH,95)}" fill="none"
+  <path id="cActual" d="${pathFrom(CASE.actual,0,0,CCW,CH,95)}" fill="none"
     stroke="${rgb(PAPER)}" stroke-width="4"/>
-  <path id="cFore" d="${pathFrom(CASE.forecast,0,0,CW,CH,95)}" fill="none"
+  <path id="cFore" d="${pathFrom(CASE.forecast,0,0,CCW,CH,95)}" fill="none"
     stroke="${rgb(BLUE)}" stroke-width="5"/>
 </svg>`;
+/* true path lengths, so the draw-on dash never leaves gaps mid-line */
+const PLEN={};
+for(const id of ["pActual","pFore","cActual","cFore"])
+  PLEN[id]=Math.ceil(document.getElementById(id).getTotalLength())+2;
 const legA=el("div","lbl","ACTUAL"), legF=el("div","lbl","FORECAST");
 const stats=[["10%","better at 1 day"],["25%","better at 3 days"],
              ["88%","bad days caught"],["77%","warnings correct"]]
@@ -220,8 +227,11 @@ window.seek=function(t){
   /* color: ink -> red (pollution) -> blue (the forecast) -> ink */
   const cMix=lin(t,[[0,0],[12,1,2.0],[38,1],[41,2,1.0],[128,2],[134,3,0.8]]);
   const dotCol=cMix<1?mix(INK,RED,cMix):cMix<2?mix(RED,BLUE,cMix-1):mix(BLUE,INK,cMix-2);
+  /* while the pill/terminal is alive the dot slips behind it, so its
+     shrink-out never sits on top of the pill text */
   S(dot,{left:px(dx-r),top:px(dy-r),width:px(2*r),height:px(2*r),
-    borderRadius:"50%",background:rgb(dotCol),zIndex:30});
+    borderRadius:"50%",background:rgb(dotCol),
+    zIndex:(t>B(57.8)&&t<B(129))?12:30});
   dot.style.opacity=r<0.5?0:1;
 
   /* beat ripple rings, bars 1-2: something lands on every beat */
@@ -288,10 +298,6 @@ window.seek=function(t){
     const ex=c[1]+(1500-c[1])*condense, ey=c[2]+(620-c[2])*condense;
     ray.setAttribute("x1",ex);ray.setAttribute("y1",ey);
     ray.setAttribute("stroke",rgb(mix(fg,fg,0)));ray.setAttribute("opacity",0.28*mapOp);
-    const s=document.getElementById("str"+i);
-    const k=clamp((t-B(44+i*2))/ (BEAT*1.6),0,1);
-    s.setAttribute("cx",ex+(CHI[0]-ex)*k); s.setAttribute("cy",ey+(CHI[1]-ey)*k);
-    s.setAttribute("opacity",(k>0&&k<1?1:0)*mapOp);
     const o=io(t,41+i*0.5,52+i*0.5);
     S(citylbls[i],{left:px(ex-130),top:px(ey-56+o.y),color:rgb(fg),opacity:o.op*.8,
       filter:`blur(${o.bl}px)`});
@@ -370,10 +376,10 @@ window.seek=function(t){
   chartsvg.style.opacity=clamp(chIn-rOut,0,1);
   S(chartsvg,{left:px(TESTX),top:px(TESTY)});
   const pA=document.getElementById("pActual"), pF=document.getElementById("pFore");
-  const lenA=6000;
   const fTest=clamp(sstep(t,B(93),1.1,.95),0,1);
   for(const [p,f_] of [[pA,fTest],[pF,clamp(fTest-0.12,0,1)]]){
-    p.setAttribute("stroke-dasharray",lenA);p.setAttribute("stroke-dashoffset",lenA*(1-f_));
+    const L=PLEN[p.id];
+    p.setAttribute("stroke-dasharray",L);p.setAttribute("stroke-dashoffset",L*(1-f_));
     p.setAttribute("opacity",f_>0?1:0);
   }
   {const o=io(t,94,OUT_R);S(legA,{left:px(TESTX+CW-320),top:px(TESTY+8+o.y),color:rgb(fg),opacity:o.op*.8});}
@@ -390,27 +396,27 @@ window.seek=function(t){
   casesvg.style.opacity=clamp(caseIn-caseOut,0,1);
   S(casesvg,{left:px(CASEX),top:px(CASEY)});
   const cA=document.getElementById("cActual"), cF=document.getElementById("cFore");
-  const lenC=2400;
   const fCase=clamp(sstep(t,B(113),1.3,.95),0,1);
   for(const [p,f_] of [[cA,fCase],[cF,clamp(fCase-0.15,0,1)]]){
-    p.setAttribute("stroke-dasharray",lenC);p.setAttribute("stroke-dashoffset",lenC*(1-f_));
+    const L=PLEN[p.id];
+    p.setAttribute("stroke-dasharray",L);p.setAttribute("stroke-dashoffset",L*(1-f_));
     p.setAttribute("opacity",f_>0?1:0);
   }
 
   /* honesty labels bars 29-32 */
-  {const o=io(t,117,127);S(mReal,{left:px(CASEX+CW*0.42),top:px(240+o.y),color:rgb(RED),
+  {const o=io(t,117,127);S(mReal,{left:px(CASEX+60),top:px(205+o.y),color:rgb(RED),
      opacity:o.op,filter:`blur(${o.bl}px)`});}
-  {const o=io(t,118.5,127);S(mOurs,{left:px(CASEX+CW*0.30),top:px(930+o.y),color:rgb(BLUE),
+  {const o=io(t,118.5,127);S(mOurs,{left:px(CASEX+80),top:px(910+o.y),color:rgb(BLUE),
      opacity:o.op,filter:`blur(${o.bl}px)`});}
   hon.forEach((e,i)=>{
     const o=io(t,120+i*2,127);
-    S(e,{left:px(1140),top:px(380+i*160+o.y),color:i===1?rgb([255,200,90]):rgb(PAPER),
-      opacity:o.op*(dark>0.5?1:0),filter:`blur(${o.bl}px)`,maxWidth:"720px",
+    S(e,{left:px(1120),top:px(380+i*160+o.y),color:i===1?rgb([255,200,90]):rgb(PAPER),
+      opacity:o.op*(dark>0.5?1:0),filter:`blur(${o.bl}px)`,maxWidth:"740px",
       font:"800 44px/1.25 Inter"});
   });
 
   /* close bars 33-36 */
-  const base=sstep(t,B(129),2.4,.8)*(1-sstep(t,B(141),2.6,.9));
+  const base=Math.max(0,sstep(t,B(129),2.4,.8)*(1-sstep(t,B(141),2.6,.9)));
   S(under,{left:px(CX-420),top:px(CY+120),width:px(840*base),height:"10px",
     background:rgb(fg),borderRadius:"5px",opacity:base});
   wm.forEach((e,i)=>{
