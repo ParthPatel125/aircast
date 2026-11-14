@@ -98,7 +98,8 @@ mapsvg.innerHTML=`<svg width="1920" height="1080">
 const citydots=CITY.map(()=>el("div"));
 const citylbls=CITY.map(c=>el("div","lbl",c[0].toUpperCase()));
 const chilbl=el("div","lbl","CHICAGO");
-const chips=[ "today's monitor readings","today's weather","PM2.5 in four cities upwind" ]
+const chipHead=el("div","","Every morning, AirCast reads");
+const chips=[ "Chicago's air right now","today's weather","PM2.5 in four cities upwind" ]
   .map(s=>el("div","",s));
 const model=el("div","","<div style='font-weight:800;font-size:40px'>Ridge regression</div><div style='font-weight:500;font-size:24px;opacity:.62;margin-top:8px'>trained on the past, tested only on the future</div>");
 /* terminal (the pill grows into this) */
@@ -184,6 +185,7 @@ S(h2sub2,{font:"500 30px Inter",opacity:".65"});
 citylbls.forEach(e=>S(e,{font:"600 24px Inter",letterSpacing:".12em",
   width:"260px",textAlign:"center"}));
 S(chilbl,{font:"800 28px Inter",letterSpacing:".12em"});
+S(chipHead,{font:"600 30px Inter"});
 chips.forEach(e=>S(e,{font:"600 30px Inter",padding:"18px 30px",borderRadius:"16px"}));
 S(model,{padding:"44px 56px",borderRadius:"28px",textAlign:"center"});
 S(tcmd,{font:"700 31px/1 Menlo,Inter",whiteSpace:"pre"});
@@ -294,21 +296,21 @@ window.seek=function(t){
   const mapOp=clamp(mapIn-mapOut,0,1);
   mapsvg.style.opacity=mapOp;
   CITY.forEach((c,i)=>{
+    /* everything exits by fading in place; nothing slides into a pile */
     const ray=document.getElementById("ray"+i);
-    const condense=sstep(t,B(52+i*0.5),2.6,.8);
-    const ex=c[1]+(1500-c[1])*condense, ey=c[2]+(620-c[2])*condense;
-    ray.setAttribute("x1",ex);ray.setAttribute("y1",ey);
-    ray.setAttribute("stroke",rgb(mix(fg,fg,0)));ray.setAttribute("opacity",0.28*mapOp);
+    ray.setAttribute("stroke",rgb(fg));ray.setAttribute("opacity",0.28*mapOp);
     const o=io(t,41+i*0.5,52+i*0.5);
-    S(citylbls[i],{left:px(ex-130),top:px(ey-56+o.y),color:rgb(fg),opacity:o.op*.8,
+    S(citylbls[i],{left:px(c[1]-130),top:px(c[2]-56+o.y),color:rgb(fg),opacity:o.op*.8,
       filter:`blur(${o.bl}px)`});
   });
   /* below the dot (the rays come in from above-left), gone with the map */
   {const o=io(t,41.5,53);S(chilbl,{left:px(CHI[0]-200),top:px(CHI[1]+40+o.y),color:rgb(fg),
     opacity:o.op,filter:`blur(${o.bl}px)`});}
+  {const o=io(t,45,54);S(chipHead,{left:px(170),top:px(470+o.y),color:rgb(fg),
+    opacity:o.op*.6,filter:`blur(${o.bl}px)`});}
   chips.forEach((e,i)=>{
     const o=io(t,46+i*2,54+i*0.5);
-    S(e,{left:px(170),top:px(300+i*100+o.y),background:rgb(fg),color:rgb(bg),
+    S(e,{left:px(170),top:px(540+i*100+o.y),background:rgb(fg),color:rgb(bg),
       opacity:o.op,filter:`blur(${o.bl}px)`});
   });
   /* model card bars 14-15 */
@@ -406,8 +408,8 @@ window.seek=function(t){
   }
 
   /* honesty labels bars 29-32 */
-  {const o=io(t,117,127);S(mReal,{left:px(CASEX+60),top:px(205+o.y),color:rgb(RED),
-     opacity:o.op,filter:`blur(${o.bl}px)`});}
+  {const o=io(t,117,127);S(mReal,{left:px(CASEX+CCW/2-230),width:"460px",textAlign:"center",
+     top:px(205+o.y),color:rgb(RED),opacity:o.op,filter:`blur(${o.bl}px)`});}
   {const o=io(t,118.5,127);S(mOurs,{left:px(CASEX+80),top:px(910+o.y),color:rgb(BLUE),
      opacity:o.op,filter:`blur(${o.bl}px)`});}
   hon.forEach((e,i)=>{
