@@ -1,11 +1,13 @@
 """AirCast live demo: forecast tomorrow's PM2.5 for Chicago, right now.
 
-Trains the model on the full historical dataset (data/daily.csv), fetches
-today's conditions from Open-Meteo, and prints tomorrow's forecast with the
-alert level. Run: python src/predict_tomorrow.py
+Trains on historical CAMS estimates, fetches current Open-Meteo inputs, and
+prints a CAMS-based next-day estimate with the alert level.
+Run: python src/predict_tomorrow.py
 """
 import warnings
-from datetime import date, timedelta
+from datetime import datetime, timedelta
+from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -19,9 +21,10 @@ warnings.filterwarnings("ignore", message=".*matmul.*", category=RuntimeWarning)
 CITY = "Chicago"
 LAT, LON = 41.8781, -87.6298
 TIMEZONE = "America/Chicago"
+DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 WARNING_TRIGGER = 15.0  # WHO 2021 daily guideline
 # 80% prediction interval, from 2024 validation residuals of this script's
-# no-key CAMS pipeline (same conformal procedure as notebook section 9)
+# no-key CAMS pipeline (residual quantiles, as in notebook section 9)
 INTERVAL_LO, INTERVAL_HI = -5.3, 3.5
 # WATCH fires when the top of the interval crosses the guideline (notebook s10)
 WATCH_TRIGGER = WARNING_TRIGGER - INTERVAL_HI
@@ -57,12 +60,21 @@ def add_upwind(f, up):
     return f
 
 
+def fetch_live_json(url, params, section):
+    response = requests.get(url, params=params, timeout=20)
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict) or not isinstance(payload.get(section), dict):
+        raise ValueError(f"Open-Meteo response is missing {section} data.")
+    return payload[section]
+
+
 def fetch_recent_pm25(lat, lon):
     """Last 10 days of daily-mean PM2.5 at one location, including today."""
-    air = requests.get("https://air-quality-api.open-meteo.com/v1/air-quality", params={
+    hourly = fetch_live_json("https://air-quality-api.open-meteo.com/v1/air-quality", {
         "latitude": lat, "longitude": lon, "timezone": TIMEZONE,
-        "past_days": 10, "forecast_days": 1, "hourly": "pm2_5"}, timeout=60).json()
-    a = pd.DataFrame(air["hourly"])
+        "past_days": 10, "forecast_days": 1, "hourly": "pm2_5"}, "hourly")
+    a = pd.DataFrame(hourly)
     a["time"] = pd.to_datetime(a["time"])
     a = a.dropna(subset=["pm2_5"])
     a["date"] = a["time"].dt.date
@@ -71,32 +83,36 @@ def fetch_recent_pm25(lat, lon):
     return daily
 
 
-def fetch_recent():
+def fetch_recent(today):
     """Last 10 days of PM2.5 (Chicago + upwind) and weather, including today."""
     chi = fetch_recent_pm25(LAT, LON)
-    hours_today = int(chi["count"].iloc[-1])
+    if today not in chi.index:
+        raise ValueError(f"No Chicago PM2.5 estimates for {today.date()}.")
+    hours_today = int(chi.at[today, "count"])
     pm = chi["mean"].rename("pm25")
     up = pd.concat({name: fetch_recent_pm25(lat, lon)["mean"]
                     for name, (lat, lon) in UPWIND.items()}, axis=1)
 
-    wx = requests.get("https://api.open-meteo.com/v1/forecast", params={
+    daily_weather = fetch_live_json("https://api.open-meteo.com/v1/forecast", {
         "latitude": LAT, "longitude": LON, "timezone": TIMEZONE,
         "past_days": 10, "forecast_days": 1,
         "daily": ",".join([
             "temperature_2m_mean", "temperature_2m_max", "temperature_2m_min",
             "precipitation_sum", "wind_speed_10m_max",
             "wind_direction_10m_dominant", "shortwave_radiation_sum",
-            "relative_humidity_2m_mean", "surface_pressure_mean"])}, timeout=60).json()
-    w = pd.DataFrame(wx["daily"])
+            "relative_humidity_2m_mean", "surface_pressure_mean"])}, "daily")
+    w = pd.DataFrame(daily_weather)
     w["time"] = pd.to_datetime(w["time"])
-    recent = w.set_index("time").join(pm, how="inner").dropna(subset=["pm25"])
-    return recent, up, hours_today
+    dates = pd.date_range(end=today, periods=3, name="date")
+    recent = w.set_index("time").reindex(dates).join(pm)
+    return recent, up.reindex(dates), hours_today
 
 
 def main():
+    today = pd.Timestamp(datetime.now(ZoneInfo(TIMEZONE)).date())
     print(f"AirCast: next-day PM2.5 forecast for {CITY}\n" + "-" * 48)
-    hist = pd.read_csv("data/daily.csv", parse_dates=["date"], index_col="date")
-    hist_up = pd.read_csv("data/upwind.csv", parse_dates=["date"], index_col="date")
+    hist = pd.read_csv(DATA_DIR / "daily.csv", parse_dates=["date"], index_col="date")
+    hist_up = pd.read_csv(DATA_DIR / "upwind.csv", parse_dates=["date"], index_col="date")
     X = add_upwind(build_features(hist), hist_up)
     y = hist["pm25"].shift(-1)
     train = X.join(y.rename("y")).dropna()
@@ -105,21 +121,24 @@ def main():
     print(f"Model trained on {len(train)} days "
           f"({train.index.min().date()} to {train.index.max().date()})")
 
-    recent, recent_up, hours_today = fetch_recent()
-    today_row = add_upwind(build_features(recent), recent_up).iloc[[-1]]
-    today = today_row.index[0].date()
-    if today < date.today():
-        print(f"Note: most recent complete data is for {today}.")
-    print(f"Today ({today}) so far: {today_row['pm25_today'].iloc[0]:.1f} µg/m³ "
-          f"({hours_today} hours of data)")
-    print(f"Upwind now: " + ", ".join(
+    recent, recent_up, hours_today = fetch_recent(today)
+    today_row = add_upwind(build_features(recent), recent_up).loc[[today]]
+    missing = today_row.columns[~np.isfinite(today_row.to_numpy()).all(axis=0)]
+    if len(missing):
+        raise ValueError(f"Missing inputs for {today.date()}: {', '.join(missing)}.")
+    print(f"Today's CAMS estimate ({today.date()}): {today_row['pm25_today'].iloc[0]:.1f} µg/m³ "
+          f"({hours_today} hourly estimates)")
+    print("Upwind CAMS estimates: " + ", ".join(
         f"{c.replace('_', ' ').title()} {today_row[f'up_{c}'].iloc[0]:.0f}" for c in UPWIND)
         + " µg/m³")
 
-    pred = float(model.predict(today_row)[0])
-    tomorrow = today + timedelta(days=1)
-    print(f"\nForecast for tomorrow ({tomorrow}): {pred:.1f} µg/m³ "
-          f"(likely range {pred + INTERVAL_LO:.0f}–{pred + INTERVAL_HI:.0f})")
+    raw_pred = float(model.predict(today_row)[0])
+    pred = max(0.0, raw_pred)
+    lower = max(0.0, raw_pred + INTERVAL_LO)
+    upper = max(0.0, raw_pred + INTERVAL_HI)
+    tomorrow = today.date() + timedelta(days=1)
+    print(f"\nCAMS-based forecast for tomorrow ({tomorrow}): {pred:.1f} µg/m³ "
+          f"(estimated 80% interval {lower:.0f}–{upper:.0f})")
     if pred > WARNING_TRIGGER:
         print("Alert level: WARNING. Likely above the WHO daily guideline. "
               "Move outdoor practice indoors.")
@@ -127,8 +146,11 @@ def main():
         print("Alert level: WATCH. Tomorrow may approach the WHO daily guideline. "
               "Have an indoor backup plan.")
     else:
-        print("Alert level: ALL CLEAR. Outdoor activity looks fine.")
+        print("Alert level: BELOW GUIDELINE in this forecast.")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (requests.RequestException, OSError, KeyError, ValueError) as exc:
+        raise SystemExit(f"AirCast forecast unavailable: {exc}") from None
