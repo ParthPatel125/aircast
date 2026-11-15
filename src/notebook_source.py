@@ -159,14 +159,21 @@ print(f"{data.shape[0]} usable days, {features.shape[1]} features")
 # %% [markdown]
 # ## 3. Train/test split: by time, never shuffled
 #
-# A random split would let the model "see the future" (days adjacent to test days),
-# which inflates scores dishonestly. We train on **Aug 2022 to Dec 2024** and test on
-# **all of 2025**, 316 days the model has never seen, including a 2025
-# wildfire-smoke episode.
+# Tests use forecast issue dates in 2025 through November 11, the last date
+# with a known next-day reading. Training excludes any row whose target reading
+# falls on or after the test cutoff. The same rule applies to each forecast
+# horizon, the calibration period, and the 2023 replay.
 
 # %%
 SPLIT = "2025-01-01"
-train, test = data[data.index < SPLIT], data[data.index >= SPLIT]
+
+
+def before_cutoff(frame, cutoff, horizon=1):
+    """Keep only rows whose target dates precede the cutoff."""
+    return frame[frame.index + pd.Timedelta(days=horizon) < pd.Timestamp(cutoff)]
+
+
+train, test = before_cutoff(data, SPLIT), data[data.index >= SPLIT]
 X_train, y_train = train.drop(columns="pm25_tomorrow"), train["pm25_tomorrow"]
 X_test, y_test = test.drop(columns="pm25_tomorrow"), test["pm25_tomorrow"]
 print(f"Train: {len(train)} days ({train.index.min().date()} to {train.index.max().date()})")
@@ -178,7 +185,7 @@ print(f"Test:  {len(test)} days ({test.index.min().date()} to {test.index.max().
 # Candidates: **Ridge regression** (linear, regularized, on scaled features) and
 # **gradient-boosted trees** in a default and a conservative version. To choose
 # between them we use 5-fold time-series cross-validation inside the training
-# period: each fold trains on earlier days and validates on the days right after.
+# period, with a one-row gap so the final training target precedes validation.
 
 # %%
 from sklearn.pipeline import make_pipeline
@@ -196,7 +203,7 @@ def make_candidates():
             max_leaf_nodes=7, learning_rate=0.05, max_iter=300, random_state=0),
     }
 
-tscv = TimeSeriesSplit(n_splits=5)
+tscv = TimeSeriesSplit(n_splits=5, gap=1)
 cv_mae = {}
 for name, model in make_candidates().items():
     scores = cross_val_score(model, X_train, y_train, cv=tscv,
@@ -209,7 +216,7 @@ cv_table = pd.Series({**cv_mae, "Persistence baseline": persist_cv},
 cv_table
 
 # %% [markdown]
-# ## 5. First results on the untouched 2025 test year
+# ## 5. Local model results on the 2025 test period
 
 # %%
 best_name = cv_table.drop("Persistence baseline").idxmin()
@@ -235,6 +242,7 @@ fig, ax = plt.subplots(figsize=(11, 4.2))
 ax.plot(y_test.index, y_test, lw=1, color="#111827", label="Actual (next day, EPA monitors)")
 ax.plot(best.index, best, lw=1, color="#2563eb", alpha=0.85, label=f"Forecast: {best_name}")
 ax.axhline(WHO_DAILY, color="#d97706", ls="--", lw=1, label="WHO guideline")
+ax.set_xlabel("Forecast issue date")
 ax.set_ylabel("PM2.5 (µg/m³)")
 ax.set_title("Held-out test period (2025): next-day forecast vs. actual")
 ax.legend(frameon=False)
@@ -268,6 +276,8 @@ fail
 # time: the CAMS estimate for Chicago today (an independent, physics-based
 # nowcast), each upwind city's CAMS PM2.5 today and its one-day change, and the
 # maximum across the four cities.
+# We designed these features after reviewing the local model's 2025 misses,
+# so the enhanced model's 2025 results are exploratory.
 
 # %%
 UPWIND_CITIES = ["minneapolis", "green_bay", "madison", "thunder_bay"]
@@ -282,7 +292,7 @@ def add_smoke_signals(f, cams_series, upwind):
     return f
 
 data_sm = add_smoke_signals(features, cams, up).join(target).dropna()
-tr_sm, te_sm = data_sm[data_sm.index < SPLIT], data_sm[data_sm.index >= SPLIT]
+tr_sm, te_sm = before_cutoff(data_sm, SPLIT), data_sm[data_sm.index >= SPLIT]
 model_sm = make_pipeline(StandardScaler(), Ridge(alpha=1.0)).fit(
     tr_sm.drop(columns="pm25_tomorrow"), tr_sm["pm25_tomorrow"])
 pred_sm = pd.Series(model_sm.predict(te_sm.drop(columns="pm25_tomorrow")), index=te_sm.index)
@@ -302,13 +312,13 @@ smoke_results
 # %% [markdown]
 # ## 8. The hardest test there is: June 2023, replayed
 #
-# On June 27, 2023, Chicago's monitors measured 133 µg/m³, among the worst air in
+# On June 27, 2023, Chicago's monitors measured 134 µg/m³, among the worst air in
 # the world that day. We retrain using **only data available before June 2023**
 # and replay the crisis day by day. (This is also an independent check on the
 # smoke-signal idea, which we designed after studying 2025 failures.)
 
 # %%
-cs_tr = data_sm[data_sm.index < "2023-06-01"]
+cs_tr = before_cutoff(data_sm, "2023-06-01")
 cs_te = data_sm[("2023-06-01" <= data_sm.index) & (data_sm.index <= "2023-07-15")]
 cs_model = make_pipeline(StandardScaler(), Ridge(alpha=1.0)).fit(
     cs_tr.drop(columns="pm25_tomorrow"), cs_tr["pm25_tomorrow"])
@@ -321,6 +331,7 @@ ax.plot(cs_pred.index, cs_pred, "o-", ms=3, lw=1.2, color="#16a34a", label="AirC
 ax.plot(cs_persist.index, cs_persist, "o-", ms=3, lw=1, color="#9ca3af", label="Persistence")
 ax.axhline(WHO_DAILY, color="#d97706", ls="--", lw=1)
 ax.axhline(EPA_DAILY, color="#dc2626", ls="--", lw=1)
+ax.set_xlabel("Forecast issue date")
 ax.set_ylabel("PM2.5 (µg/m³)")
 ax.set_title("June–July 2023, replayed with a model trained only on pre-June data")
 ax.legend(frameon=False)
@@ -330,15 +341,14 @@ plt.show()
 
 event = pd.DataFrame({"actual_tomorrow": cs_actual.round(1), "aircast": cs_pred.round(1),
                       "persistence": cs_persist.round(1)}).loc["2023-06-23":"2023-06-30"]
-event["aircast_warns"] = event["aircast"] > WHO_DAILY
-event["persistence_warns"] = event["persistence"] > WHO_DAILY
+event["aircast_warns"] = cs_pred > WHO_DAILY
+event["persistence_warns"] = cs_persist > WHO_DAILY
 event
 
 # %% [markdown]
-# **Reading this honestly:** nobody saw June 26 coming, not our model and not persistence:
-# coming (9 µg/m³ the day before, 32 the next day). From June 26 onward both warn,
-# but the model predicts 17 for a day that hit **134**: it gets the *decision*
-# right and the *magnitude* catastrophically wrong, and persistence is no better a
+# Both models missed the June 26 jump from 9 to 32 µg/m³. On June 26, both
+# warn for the following day. AirCast predicts 17 for the day that hit **134**.
+# The warning is correct, but the forecast badly understates the peak. Persistence is no better a
 # guide during the chaos. Our conclusion, which we'd tell our athletics director
 # to their face: AirCast's forecasts are useful on ordinary and moderately bad
 # days (most of the year), but **extreme smoke events need satellite plume data
@@ -348,17 +358,16 @@ event
 # %% [markdown]
 # ## 9. How sure is each forecast? Prediction intervals
 #
-# A single number hides uncertainty the decision-maker needs. We use **split
-# conformal prediction**: take the model's errors on the 2024 validation year
-# (predicted by a model that never saw 2024), find the spread containing 80% of
-# them, and quote that spread around every 2025 forecast. If the method is
-# honest, about 80% of 2025's actual values should land inside, a promise we
-# can check.
+# We estimate an 80% prediction interval from the 10th and 90th percentiles
+# of 2024 validation residuals. We fit the validation model on targets before
+# 2024, then apply the offsets to 2025 forecasts from the model refit through
+# 2024. We report observed coverage because refitting and changes in pollution
+# patterns can affect how well the offsets transfer.
 
 # %%
 val_split = "2024-01-01"
-v_train = data_sm[data_sm.index < val_split]
-v_val = data_sm[(data_sm.index >= val_split) & (data_sm.index < SPLIT)]
+v_train = before_cutoff(data_sm, val_split)
+v_val = tr_sm[tr_sm.index >= val_split]
 val_model = make_pipeline(StandardScaler(), Ridge(alpha=1.0)).fit(
     v_train.drop(columns="pm25_tomorrow"), v_train["pm25_tomorrow"])
 v_pred = pd.Series(val_model.predict(v_val.drop(columns="pm25_tomorrow")), index=v_val.index)
@@ -377,7 +386,7 @@ print(f"Coverage on 2025 test year: {covered:.0%} (target: 80%)")
 # - **WARNING** (act: move practice indoors): predicted PM2.5 above the WHO daily
 #   guideline (15 µg/m³).
 # - **WATCH** (be ready: have an indoor backup): fires when the **top of the 80%
-#   prediction interval** crosses the guideline: "bad air is within the likely
+#   prediction interval** exceeds the guideline: "bad air is within the likely
 #   range." A missed bad day (a child with asthma outdoors in smoke) costs far
 #   more than a false watch, so the WATCH deliberately trades precision for
 #   recall, but by a principled amount, set by the measured uncertainty.
@@ -402,28 +411,26 @@ watch_trigger = WHO_DAILY - hi_q  # pred + hi_q > 15  <=>  pred > 15 - hi_q
 print(f"WATCH trigger: forecast > {watch_trigger:.1f} µg/m³ "
       f"(guideline 15 minus interval top {hi_q:+.1f})")
 alerts = pd.DataFrame({
-    f"AirCast WATCH (interval touches 15)": warning_scores(y_test, pred_sm, watch_trigger),
-    f"AirCast WARNING (forecast > 15)": warning_scores(y_test, pred_sm, WHO_DAILY),
+    "AirCast WATCH (interval extends above 15)": warning_scores(y_test, pred_sm, watch_trigger),
+    "AirCast WARNING (forecast > 15)": warning_scores(y_test, pred_sm, WHO_DAILY),
     "Persistence (alert if today was bad)": warning_scores(y_test, X_test["epa_today"], WHO_DAILY),
 }).T
 alerts.round(2)
 
 # %% [markdown]
 # The WARNING beats persistence on **both** recall and precision, and the WATCH
-# catches nearly nine bad days in ten a day ahead, at a tolerable one-false-watch-
-# per-correct-watch rate. Both triggers were fixed before touching 2025.
+# catches nearly nine bad days in ten a day ahead, with about one false watch
+# per correct watch. The triggers use the guideline and 2024 residuals.
 
 # %% [markdown]
 # ## 11. How far ahead does the forecast stay useful?
 
 # %%
-from sklearn.base import clone
-
 horizon_rows = {}
 full_features = add_smoke_signals(features, cams, up)
 for h in [1, 2, 3]:
     d_h = full_features.join(epa.shift(-h).rename("y")).dropna()
-    tr, te = d_h[d_h.index < SPLIT], d_h[d_h.index >= SPLIT]
+    tr, te = before_cutoff(d_h, SPLIT, h), d_h[d_h.index >= SPLIT]
     m = make_pipeline(StandardScaler(), Ridge(alpha=1.0)).fit(tr.drop(columns="y"), tr["y"])
     horizon_rows[f"+{h} day"] = {
         "Model MAE": mean_absolute_error(te["y"], m.predict(te.drop(columns="y"))),
@@ -473,7 +480,7 @@ mke_epa = pd.read_csv("data/epa_milwaukee.csv", parse_dates=["date"],
                       index_col="date")["epa_pm25"].loc["2022-08-04":"2025-11-12"]
 mke_data = add_smoke_signals(build_features(mke_epa, mke_wx), mke_wx["pm25"], up).join(
     mke_epa.shift(-1).rename("pm25_tomorrow")).dropna()
-mke_train = mke_data[mke_data.index < SPLIT]
+mke_train = before_cutoff(mke_data, SPLIT)
 mke_test = mke_data[mke_data.index >= SPLIT]
 mke_y = mke_test["pm25_tomorrow"]
 mke_X = mke_test.drop(columns="pm25_tomorrow")
@@ -505,11 +512,11 @@ transfer
 # `src/predict_tomorrow.py` fetches *current* conditions (Chicago + upwind cities)
 # and forecasts tomorrow. It uses the no-API-key CAMS pipeline so that anyone can
 # run it; a school district deploying the monitor-target model would plug in EPA's
-# free AirNow feed for the live monitor value. The output below is from the moment
-# this notebook was executed:
+# free AirNow feed for the live monitor value. Run the command below in a
+# notebook cell with an internet connection.
 
 # %%
-# %run src/predict_tomorrow.py
+# Optional live forecast: %run src/predict_tomorrow.py
 
 # %% [markdown]
 # ## 15. Conclusions, honestly
@@ -540,7 +547,7 @@ print(f"WARNING: caught {warn['Recall (bad days caught)']:.0%} of bad days "
 #   Our tool's honest role is the ordinary 1-day-in-9 bad day, not the
 #   once-a-year catastrophe.
 # - **Interval coverage degrades under shift:** calibrated in calmer 2024, the
-#   80% intervals covered less than promised in smokier 2025 (printed above).
+#   intervals covered fewer than 80% of observed values in the 2025 test period.
 #   A deployment would recalibrate on a rolling window.
 # - **Weights are local:** Chicago's trained model does not beat Milwaukee's own
 #   persistence; the retrained pipeline does. Method transfers, weights don't.

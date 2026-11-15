@@ -23,7 +23,7 @@ A school athletics director in Chicago has to decide today whether tomorrow's ou
 
 ## What we built
 
-AirCast predicts **tomorrow's PM2.5 as Chicago's EPA regulatory monitors will measure it**, which is the number behind official advisories. It works from today's monitor readings, the weather, and what we call smoke signals: the CAMS atmospheric-model estimate for Chicago plus current PM2.5 in four cities upwind on the Canadian-smoke path (Minneapolis, Green Bay, Madison, Thunder Bay). Every forecast comes with an 80% uncertainty interval and a two-level alert: **WATCH** means the interval touches the guideline, so plan an indoor backup; **WARNING** means the forecast itself is over it, so move indoors. `src/predict_tomorrow.py` runs a real forecast in a few seconds, no API key needed.
+The research model predicts **tomorrow's daily average PM2.5 at EPA monitors in Cook County**. It uses today's monitor readings, weather, and smoke signals: CAMS atmospheric-model estimates for Chicago and four cities upwind on the Canadian-smoke path (Minneapolis, Green Bay, Madison, Thunder Bay). An estimated 80% prediction interval drives two alerts. **WATCH** means the interval extends above the guideline. **WARNING** means the point forecast exceeds it. The no-key live demo in `src/predict_tomorrow.py` trains and forecasts against CAMS estimates. The EPA results below come from the notebook.
 
 ## What we added
 
@@ -31,18 +31,18 @@ Starting from the suggested next-day air-quality project:
 
 1. Before trusting the brief's no-key data source (CAMS model estimates), we checked it against Chicago's real EPA monitors. It only correlates at **r = 0.67** and understated the worst day in our data almost 3× (50 vs 134 µg/m³). That check changed the whole project: we predict the monitors instead, and CAMS became just another input.
 2. Our worst misses were all sudden smoke arrivals, which local data simply cannot see. Adding the upwind smoke signals cut error on those days from 21.8 (persistence) and 22.8 (local-only) to **17.9 µg/m³**.
-3. The forecast ships with split-conformal 80% intervals (realized coverage on 2025 was 77%, and we say why it fell short). Our first alert design, tuned for 85% recall, turned out to need 234 alerts a year at 6% precision. We kept that failure in the notebook and derived the WATCH trigger from the interval instead.
+3. We estimated 80% prediction intervals using 2024 validation residuals and observed 77% coverage in the 2025 test period. Our first alert design, tuned for 85% recall, turned out to need 234 alerts a year at 6% precision. We kept that failure in the notebook and derived the WATCH trigger from the interval.
 4. A replay of the June 2023 smoke event with a frozen model, and a Milwaukee transfer test (both below).
 
 ## How it works
 
-Data: 1,197 days (Aug 2022 to Nov 2025), no gaps: EPA AQS daily files (Cook County monitors averaged; same for Milwaukee), Open-Meteo CAMS air quality and historical weather (free, no key). 25 features: monitor PM2.5 lags, today's weather, season, and the smoke signals. Ridge regression won 5-fold *time-series* cross-validation inside the training period (CV MAE 3.35 vs persistence 3.53) against two gradient-boosted-tree variants. Train: Aug 2022 to Dec 2024. Test: all of 2025, 315 later days, never shuffled, touched once.
+The dataset covers 1,197 consecutive days from August 4, 2022 through November 12, 2025. It combines EPA AQS daily files (Cook County and Milwaukee County monitor averages), Open-Meteo CAMS air quality, and historical weather. The 25 features cover monitor PM2.5 lags, weather, seasonality, and smoke signals. Ridge led five-fold time-series cross-validation (3.33 µg/m³ MAE vs. 3.53 for persistence). Training targets precede January 1, 2025. The test covers 315 forecasts issued January 1 through November 11, 2025. We used the local model's 2025 misses to design the smoke features, so the 2025 results for the enhanced model are exploratory.
 
 ## Results
 
 Persistence baseline ("tomorrow = today"): **3.46 µg/m³ MAE** on the 2025 test year. AirCast: **3.11 µg/m³, 10% better**, growing to 20% at 2 days ahead and 25% at 3. On 2025's 34 bad days (>15 µg/m³): **WATCH caught 88%** (precision 48%); **WARNING caught 71% at 77% precision**; persistence managed 68%/68%.
 
-**Where it fails.** This is the part we'd tell a judge first. We replayed June 2023 (Chicago's worst air on record, 134 µg/m³) with a model trained only on pre-June data. Nobody saw the first smoke day coming, not our model and not persistence (9 to 32 µg/m³ overnight). The model then warns through the rest of the event, but it predicts 17 for the day that hit 134: right decision, wrong magnitude. So AirCast is for the ordinary 1-in-9 bad day; **extreme smoke events need satellite plume data that none of our inputs contain**, and during one you should follow live advisories, not any day-ahead forecast. One more limit: Chicago-trained weights applied to Milwaukee actually lose to Milwaukee's own persistence (3.65 vs 3.60), while the identical pipeline retrained on Milwaukee wins (3.51). The method transfers; the weights are local. And this is a student prototype, not an official air-quality advisory.
+**Where it fails.** In a replay trained on pre-June data, both AirCast and persistence missed the first smoke-day jump from 9 to 32 µg/m³. AirCast issued a warning for the peak day, forecasting 17 µg/m³ against a recorded 134 µg/m³. Extreme smoke events expose the limits of the available inputs. Follow live official advisories during these events. Chicago-trained weights also trailed Milwaukee's persistence baseline (3.65 vs. 3.60 µg/m³ MAE). Retraining the same pipeline in Milwaukee brought MAE down to 3.51 µg/m³.
 
 ## What we'd do next
 
@@ -51,10 +51,10 @@ Add NOAA's satellite smoke-plume maps as a feature, since that is exactly the ga
 ## Run it yourself
 
 ```bash
-pip install -r requirements.txt
-python src/fetch_data.py && python src/fetch_epa.py   # rebuild data/ (also committed)
-jupyter notebook AirCast.ipynb                        # full analysis, outputs saved
-python src/predict_tomorrow.py                        # live forecast for tomorrow
+python -m pip install -r requirements.txt
+jupyter notebook AirCast.ipynb                       # analysis using committed CSVs
+python src/predict_tomorrow.py                       # live CAMS forecast (internet required)
+python src/fetch_data.py && python src/fetch_epa.py    # optional: refresh data from public APIs
 ```
 
 ## Sources
