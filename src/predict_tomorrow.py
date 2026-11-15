@@ -94,7 +94,7 @@ def fetch_recent():
 
 
 def main():
-    print(f"AirCast — next-day PM2.5 forecast for {CITY}\n" + "-" * 48)
+    print(f"AirCast: next-day PM2.5 forecast for {CITY}\n" + "-" * 48)
     hist = pd.read_csv("data/daily.csv", parse_dates=["date"], index_col="date")
     hist_up = pd.read_csv("data/upwind.csv", parse_dates=["date"], index_col="date")
     X = add_upwind(build_features(hist), hist_up)
@@ -121,13 +121,13 @@ def main():
     print(f"\nForecast for tomorrow ({tomorrow}): {pred:.1f} µg/m³ "
           f"(likely range {pred + INTERVAL_LO:.0f}–{pred + INTERVAL_HI:.0f})")
     if pred > WARNING_TRIGGER:
-        print("Alert level: WARNING — likely above the WHO daily guideline. "
+        print("Alert level: WARNING. Likely above the WHO daily guideline. "
               "Move outdoor practice indoors.")
     elif pred > WATCH_TRIGGER:
-        print("Alert level: WATCH — may approach the WHO daily guideline. "
+        print("Alert level: WATCH. Tomorrow may approach the WHO daily guideline. "
               "Have an indoor backup plan.")
     else:
-        print("Alert level: ALL CLEAR — outdoor activity looks fine.")
+        print("Alert level: ALL CLEAR. Outdoor activity looks fine.")
 
 
 if __name__ == "__main__":

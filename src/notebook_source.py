@@ -1,7 +1,7 @@
 # %% [markdown]
 # # AirCast: next-day air quality forecast for Chicago
 #
-# **Track:** Climate · **Team:** Parth Patel, Anay Goyal — Emerson High School
+# **Track:** Climate · **Team:** Parth Patel and Anay Goyal, Emerson High School
 #
 # **Who is this for?** A school athletics director (or a parent) in Chicago deciding
 # *today* whether tomorrow's outdoor practice should be moved indoors. Fine-particle
@@ -9,18 +9,18 @@
 # deep into the lungs, and children exercising outdoors are among the most exposed.
 #
 # **What it does:** predicts **tomorrow's PM2.5 as Chicago's EPA regulatory monitors
-# will measure it** — the number that drives official air-quality advisories — and
+# will measure it**, the number that drives official air-quality advisories, and
 # turns the prediction into a concrete two-level alert: *WATCH* (have an indoor
 # backup plan) and *WARNING* (move practice indoors).
 #
 # **The rules we follow (from the brief):**
 # - One location (Chicago), one decision, one decider.
-# - Train on earlier dates, test on later dates — never shuffled.
+# - Train on earlier dates, test on later dates, never shuffled.
 # - Every model is compared against the **persistence baseline**: "tomorrow will be
 #   the same as today." Beating it is the whole game in day-ahead forecasting.
 
 # %% [markdown]
-# ## 1. Data — and why we checked it before trusting it
+# ## 1. The data, and why we checked it before trusting it
 #
 # Three sources, all public, fetched by `src/fetch_data.py` and `src/fetch_epa.py`:
 #
@@ -30,7 +30,7 @@
 # - **CAMS atmospheric model estimates** via [Open-Meteo](https://open-meteo.com/)
 #   (free, no key): hourly PM2.5 averaged to daily means, for Chicago and for four
 #   cities *upwind* on the Canadian-wildfire-smoke path (Minneapolis, Green Bay,
-#   Madison, Thunder Bay). These are *model* values, not measurements — the brief
+#   Madison, Thunder Bay). These are *model* values, not measurements; the brief
 #   asks us to say this clearly, and it turned out to matter a lot (next cell).
 # - **Weather** (Open-Meteo historical archive): temperature, precipitation, wind,
 #   humidity, radiation, pressure.
@@ -60,7 +60,7 @@ WHO_DAILY = 15.0   # WHO 2021 daily guideline, ug/m3
 EPA_DAILY = 35.0   # US EPA 24-hour standard, ug/m3
 
 # %% [markdown]
-# ### We validated the convenient data against ground truth — and switched targets
+# ### We validated the convenient data against ground truth, then switched targets
 #
 # Our first version trained *and evaluated* on the CAMS estimates alone, because
 # they're free and gapless. Before trusting that, we checked CAMS against the EPA
@@ -89,8 +89,8 @@ plt.show()
 # %% [markdown]
 # Correlation of only ~0.67, and the worst day understated almost threefold. A
 # tool that forecasts *CAMS* could look accurate while misleading the person
-# acting on it. So AirCast **predicts the EPA monitor value** — what Chicago
-# actually breathes — and uses CAMS only as an input signal, where imperfect
+# acting on it. So AirCast **predicts the EPA monitor value**, what Chicago
+# actually breathes, and uses CAMS only as an input signal, where imperfect
 # information still helps.
 
 # %% [markdown]
@@ -116,7 +116,7 @@ print(f"Days over WHO guideline (15): {(epa > WHO_DAILY).sum()} of {n} ({(epa > 
 print(f"Days over EPA standard (35):  {(epa > EPA_DAILY).sum()} of {n}")
 
 # %% [markdown]
-# Roughly **1 day in 9** exceeds the WHO guideline — a real, recurring decision,
+# Roughly **1 day in 9** exceeds the WHO guideline, a real recurring decision,
 # not a once-a-year event. The extremes are wildfire smoke.
 
 # %% [markdown]
@@ -130,7 +130,7 @@ print(f"Days over EPA standard (35):  {(epa > EPA_DAILY).sum()} of {n}")
 #   temperature, humidity, radiation, pressure (stagnant days trap smog)
 # - the season, as sine/cosine of day-of-year so Dec 31 sits next to Jan 1
 #
-# A second group — the **smoke signals** — joins in section 7, after we see why
+# A second group, the **smoke signals**, joins in section 7, after we see why
 # it's needed. The target is **tomorrow's EPA daily-mean PM2.5**.
 
 # %%
@@ -157,11 +157,11 @@ data = features.join(target).dropna()
 print(f"{data.shape[0]} usable days, {features.shape[1]} features")
 
 # %% [markdown]
-# ## 3. Train/test split — by time, never shuffled
+# ## 3. Train/test split: by time, never shuffled
 #
 # A random split would let the model "see the future" (days adjacent to test days),
-# which inflates scores dishonestly. We train on **Aug 2022 – Dec 2024** and test on
-# **all of 2025** — 316 days the model has never seen, including a 2025
+# which inflates scores dishonestly. We train on **Aug 2022 to Dec 2024** and test on
+# **all of 2025**, 316 days the model has never seen, including a 2025
 # wildfire-smoke episode.
 
 # %%
@@ -254,7 +254,7 @@ fail
 
 # %% [markdown]
 # Seven of the eight worst misses are **underestimates on days when air quality
-# suddenly deteriorated** — and the eighth is the mirror image, an overestimate
+# suddenly deteriorated**, and the eighth is the mirror image, an overestimate
 # the day after a spike. That makes physical sense: wildfire smoke arrives from
 # hundreds of kilometers away, and nothing in *Chicago's own* measurements today
 # can see it coming (or see it leaving). So instead of stopping at "that's our
@@ -302,7 +302,7 @@ smoke_results
 # %% [markdown]
 # ## 8. The hardest test there is: June 2023, replayed
 #
-# On June 27, 2023, Chicago's monitors measured 133 µg/m³ — among the worst air in
+# On June 27, 2023, Chicago's monitors measured 133 µg/m³, among the worst air in
 # the world that day. We retrain using **only data available before June 2023**
 # and replay the crisis day by day. (This is also an independent check on the
 # smoke-signal idea, which we designed after studying 2025 failures.)
@@ -335,7 +335,7 @@ event["persistence_warns"] = event["persistence"] > WHO_DAILY
 event
 
 # %% [markdown]
-# **Reading this honestly:** nobody — not our model, not persistence — saw June 26
+# **Reading this honestly:** nobody saw June 26 coming, not our model and not persistence:
 # coming (9 µg/m³ the day before, 32 the next day). From June 26 onward both warn,
 # but the model predicts 17 for a day that hit **134**: it gets the *decision*
 # right and the *magnitude* catastrophically wrong, and persistence is no better a
@@ -352,7 +352,7 @@ event
 # conformal prediction**: take the model's errors on the 2024 validation year
 # (predicted by a model that never saw 2024), find the spread containing 80% of
 # them, and quote that spread around every 2025 forecast. If the method is
-# honest, about 80% of 2025's actual values should land inside — a promise we
+# honest, about 80% of 2025's actual values should land inside, a promise we
 # can check.
 
 # %%
@@ -371,21 +371,21 @@ print(f"Coverage on 2025 test year: {covered:.0%} (target: 80%)")
 # %% [markdown]
 # ## 10. From forecast to decision: the two-level alert
 #
-# The athletics director doesn't need a number — they need a yes/no by the end of
+# The athletics director doesn't need a number, they need a yes/no by the end of
 # the school day. Like real weather services, we use two levels:
 #
 # - **WARNING** (act: move practice indoors): predicted PM2.5 above the WHO daily
 #   guideline (15 µg/m³).
 # - **WATCH** (be ready: have an indoor backup): fires when the **top of the 80%
-#   prediction interval** crosses the guideline — "bad air is within the likely
+#   prediction interval** crosses the guideline: "bad air is within the likely
 #   range." A missed bad day (a child with asthma outdoors in smoke) costs far
 #   more than a false watch, so the WATCH deliberately trades precision for
-#   recall — but in a principled amount, set by the measured uncertainty.
+#   recall, but by a principled amount, set by the measured uncertainty.
 #
 # **A design that failed, reported honestly:** our first idea was to tune the
 # WATCH trigger for a fixed 85% recall on the 2024 validation year. On the real
 # monitor target that design collapses: 2024's bad days were so hard to predict
-# that hitting 85% recall required alerting on 234 of 366 days at 6% precision —
+# that hitting 85% recall required alerting on 234 of 366 days at 6% precision,
 # an alarm nobody would listen to. The interval-based WATCH replaced it.
 
 # %%
@@ -463,7 +463,7 @@ plt.show()
 # %% [markdown]
 # ## 13. Does it generalize? Chicago's model, tested on Milwaukee
 #
-# We take the final model — trained **only on Chicago** — and apply it, with no
+# We take the final model, trained **only on Chicago**, and apply it, with no
 # retraining, to Milwaukee's EPA monitors (150 km north, never seen in training).
 # Then we retrain the identical pipeline on Milwaukee's own data.
 
@@ -494,8 +494,8 @@ transfer
 
 # %% [markdown]
 # An honest, useful split result: Chicago's trained weights do **not** beat
-# Milwaukee's own persistence baseline — each city's pollution has local
-# character — but the identical pipeline **retrained on Milwaukee's data does**.
+# Milwaukee's own persistence baseline (each city's pollution has local
+# character) but the identical pipeline **retrained on Milwaukee's data does**.
 # The method generalizes; the weights are local, which is how a multi-city
 # deployment should work anyway.
 
@@ -532,7 +532,7 @@ print(f"WARNING: caught {warn['Recall (bad days caught)']:.0%} of bad days "
 # persistence on both recall and precision while the WATCH level catches almost
 # nine bad days in ten, and the pipeline retrains successfully on a second city.
 #
-# **Where it fails, and why — the part we'd say to the judges' faces:**
+# **Where it fails, and why. We'd say this to the judges' faces:**
 # - **Extreme smoke events are not forecastable with our inputs.** June 27, 2023
 #   hit 134 µg/m³; our best model said 17. Even the CAMS atmospheric model only
 #   "saw" 50 that day. Detection needs satellite plume data (NOAA HMS); during

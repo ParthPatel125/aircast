@@ -1,4 +1,4 @@
-# AirCast reel — optional voiceover guide
+# AirCast reel: optional voiceover guide
 
 The film is `demo/AirCast.mov` (72 s, 1080p60, music included). It works
 silent: every line of the story is on screen. If you want voices on it, drop
