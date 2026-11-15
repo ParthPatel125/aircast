@@ -36,7 +36,7 @@ Starting from the suggested next-day air-quality project:
 
 ## How it works
 
-Data: 1,197 days (Aug 2022 to Nov 2025), no gaps: EPA AQS daily files (Cook County monitors averaged; same for Milwaukee), Open-Meteo CAMS air quality and historical weather (free, no key). 25 features: monitor PM2.5 lags, today's weather, season, and the smoke signals. Ridge regression won 5-fold *time-series* cross-validation inside the training period (CV MAE 3.35 vs persistence 3.53) against two gradient-boosted-tree variants. Train: Aug 2022 – Dec 2024. Test: all of 2025, 315 later days, never shuffled, touched once.
+Data: 1,197 days (Aug 2022 to Nov 2025), no gaps: EPA AQS daily files (Cook County monitors averaged; same for Milwaukee), Open-Meteo CAMS air quality and historical weather (free, no key). 25 features: monitor PM2.5 lags, today's weather, season, and the smoke signals. Ridge regression won 5-fold *time-series* cross-validation inside the training period (CV MAE 3.35 vs persistence 3.53) against two gradient-boosted-tree variants. Train: Aug 2022 to Dec 2024. Test: all of 2025, 315 later days, never shuffled, touched once.
 
 ## Results
 
