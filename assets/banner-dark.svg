@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 300" font-family="-apple-system,'Segoe UI',Helvetica,Arial,sans-serif">
+<style>
+@keyframes drift { from { transform: translateX(-320px); } to { transform: translateX(1320px); } }
+.c1 { animation: drift 38s linear infinite; }
+.c2 { animation: drift 56s linear infinite; animation-delay: -30s; }
+.c3 { animation: drift 47s linear infinite; animation-delay: -14s; }
+@keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.09); } }
+.dotg { animation: pulse 2.4s ease-in-out infinite; transform-origin: 348px 140px; }
+@keyframes draw { 0% { stroke-dashoffset: 1500; } 60% { stroke-dashoffset: 0; } 100% { stroke-dashoffset: 0; } }
+.fore { stroke-dasharray: 1500; animation: draw 7s ease-out infinite; }
+</style>
+<rect width="1200" height="300" rx="14" fill="#111318"/>
+<g class="c1" fill="#1c212b"><ellipse cx="0" cy="60" rx="74" ry="26"/><ellipse cx="52" cy="46" rx="52" ry="22"/><ellipse cx="-50" cy="50" rx="46" ry="19"/></g>
+<g class="c2" fill="#1c212b" opacity=".8"><ellipse cx="0" cy="96" rx="94" ry="28"/><ellipse cx="66" cy="82" rx="58" ry="22"/><ellipse cx="-62" cy="86" rx="50" ry="19"/></g>
+<g class="c3" fill="#1c212b" opacity=".7"><ellipse cx="0" cy="36" rx="58" ry="20"/><ellipse cx="42" cy="26" rx="40" ry="16"/></g>
+<line x1="60" y1="248" x2="1140" y2="248" stroke="#e5484d" stroke-width="3" stroke-dasharray="9 9" opacity=".8"/>
+<path d="M60 266 C160 260 240 270 330 264 C440 257 560 268 650 263 C760 258 860 266 920 258 C965 250 985 170 1015 150 C1040 134 1052 180 1070 220 C1090 252 1115 262 1140 263" fill="none" stroke="#f4f2ed" stroke-width="3.5" opacity=".25"/>
+<path class="fore" d="M60 272 C160 266 240 275 330 269 C440 263 560 272 650 268 C760 264 860 271 925 265 C970 258 992 205 1018 188 C1040 174 1054 210 1072 240 C1092 262 1116 268 1140 269" fill="none" stroke="#4d7dff" stroke-width="5" stroke-linecap="round"/>
+<g class="dotg"><circle cx="348" cy="140" r="46" fill="#4d7dff"/></g>
+<text x="416" y="172" font-size="96" font-weight="800" fill="#f4f2ed" letter-spacing="-2">AirCast</text>
+<text x="418" y="216" font-size="26" font-weight="600" fill="#f4f2ed" opacity=".58">Tomorrow's PM2.5 for Chicago, forecast today.</text>
+</svg>

@@ -1,4 +1,18 @@
-# AirCast: next-day air quality forecast for Chicago
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/banner-dark.svg">
+  <img alt="AirCast: tomorrow's PM2.5 for Chicago, forecast today" src="assets/banner.svg" width="100%">
+</picture>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/track-Climate-2F6BFF?style=flat-square" alt="Climate track">
+  <img src="https://img.shields.io/badge/test_MAE-3.11_vs_3.46_baseline-111318?style=flat-square" alt="Test MAE 3.11 vs 3.46 baseline">
+  <img src="https://img.shields.io/badge/bad_days_caught-88%25-E5484D?style=flat-square" alt="88% of bad days caught">
+  <img src="https://img.shields.io/badge/live_demo-no_API_key-2F6BFF?style=flat-square" alt="Live demo, no API key">
+</p>
+
+<p align="center">
+  <img src="assets/hook.gif" alt="June 27, 2023: Chicago's air went from 9 to 134 micrograms overnight" width="840">
+</p>
 
 **Track:** Climate
 **Team:** Parth Patel and Anay Goyal, Emerson High School
